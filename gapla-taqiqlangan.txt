@@ -1,0 +1,11 @@
+# Bu so'zlar foydalanuvchi ko'radigan matnda va server manzillarida bo'lmasligi kerak.
+# Har qatorda bitta so'z; katta-kichik harf farqi yo'q. '#' bilan boshlangan qator izoh.
+# Tekshiruv: node scripts/gapla-iz-tekshir.mjs  (istisno: gapla-iz-istisno.txt)
+OpenWhispr
+Open Whispr
+openwhispr.com
+gizmolabs
+support@openwhispr
+try.openwhispr
+huggingface.co
+hf.co

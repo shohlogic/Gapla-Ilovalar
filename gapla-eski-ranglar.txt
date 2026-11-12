@@ -1,0 +1,51 @@
+# Eski brendning (OpenWhispr) ko'k-binafsha ranglari — Gapla ilovasi va klaviaturasida qaytmasin (G54, 2026-11-12).
+# Egasi: [so'zlari: bilim/gapla-goyalar-royxati.md]; namuna — kompyuter ilovasi (5ef477e) Gapla ranglari.
+# Har qatorda bitta qiymat; katta-kichik harf va bo'sh joy farqsiz; kod, izoh va sozlamaning istalgan joyida qidiriladi.
+# Tekshiruv: node scripts/gapla-iz-tekshir.mjs  (istisno: gapla-iz-istisno.txt, 'fayl:bo'lak # sabab').
+# Apple'ning o'z «Return» tugmasi ko'ki (Palette.returnKeyProminent, G46) bu ro'yxatda yo'q — u Apple tugmasi rangi.
+
+# iOS ilovasidagi eski brend: tizim ko'ki va OpenWhispr logo gradienti
+#007aff
+#0a84ff
+#5b81e4
+#154bd4
+#163992
+#2457d6
+#0e3690
+rgba(0,122,255
+rgba(21,75,212
+platformcolor('systemblue')
+ios('systemblue'
+ios('link'
+
+# Eski binafsha urg'u (kompyuterdagi oklch(0.55 0.22 285)) va ikkinchi avatar gradienti
+#6c50e9
+#6d5bd1
+#4a39a8
+
+# Klaviatura va qulf ekrani kartasidagi eski ranglar (Swift)
+red:0.03,green:0.52,blue:1.00
+red:0.141,green:0.341,blue:0.839
+red:0.055,green:0.212,blue:0.565
+red:0.424,green:0.314,blue:0.914
+
+# Kompyuter ilovasining eski ranglari (loyiha-gapla-windows/kod/gapla-taqiqlangan.json, eski_ranglar)
+#4577e9
+#5588f0
+#3466e2
+#58a7fe
+#1a7bff
+#1f80ff
+#2a88ff
+#62afff
+#8787ff
+#2056df
+#4079ed
+#244587
+#6366f1
+#7c3aed
+#a78bfa
+#8faaff
+#7da2f2
+#b9cdf8
+#2e3659

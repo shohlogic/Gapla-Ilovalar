@@ -1,0 +1,180 @@
+# Gapla til tekshiruvi (G51) istisnolari: bu matnlar ekranga chiqmaydi, shuning uchun inglizcha qolishi mumkin.
+# Format:  fayl/yo'li:matn bo'lagi  # sababi      fayl/yo'li:*  # sababi (butun fayl)      papka/:*  # sababi (butun papka)
+# Har qatorda sabab SHART. Tekshiruv: node scripts/gapla-til-tekshir.mjs
+
+# --- Gapla'da ochilmaydigan ekranlar ---
+src/screens/onboarding/steps/DictationEmailStep.tsx:*  # kirish qadami Gapla'da o'tkazib yuboriladi (GAPLA_SKIPPED_STEPS, useOnboardingStore.ts)
+src/screens/onboarding/steps/VoiceAgentStep.tsx:*  # kirish qadami Gapla'da o'tkazib yuboriladi (GAPLA_SKIPPED_STEPS)
+src/screens/onboarding/steps/voiceAgentFollowUp.ts:*  # faqat VoiceAgentStep ishlatadi, u qadam o'tkazib yuboriladi
+src/screens/onboarding/steps/ToneStep.tsx:*  # kirish qadami Gapla'da o'tkazib yuboriladi (GAPLA_SKIPPED_STEPS)
+src/screens/onboarding/steps/PrivacyModeStep.tsx:*  # kirish qadami Gapla'da o'tkazib yuboriladi (GAPLA_SKIPPED_STEPS)
+src/screens/onboarding/steps/PaywallStep.tsx:*  # to'lov qadami Gapla'da o'tkazib yuboriladi (GAPLA_SKIPPED_STEPS)
+src/screens/onboarding/steps/PrivateDownloadStep.tsx:*  # kirish qadami Gapla'da o'tkazib yuboriladi (GAPLA_SKIPPED_STEPS)
+src/screens/onboarding/steps/SlowDownloadSheet.tsx:*  # faqat PrivateDownloadStep ochadi, u qadam o'tkazib yuboriladi
+src/screens/onboarding/steps/CreateAccountStep.tsx:*  # hisob ochish qadami Gapla'da o'tkazib yuboriladi (GAPLA_SKIPPED_STEPS)
+src/screens/onboarding/steps/TrackingPermissionStep.tsx:*  # kuzatuv ruxsati qadami Gapla'da o'tkazib yuboriladi (GAPLA_SKIPPED_STEPS)
+src/screens/AuthScreen.tsx:*  # Gapla'da hisob yo'q: foydalanuvchi doim mehmon, kirish ekrani chiqmaydi (useAuthStore.ts)
+app/auth.tsx:*  # AuthScreen yo'li; Gapla'da kirish ekrani chiqmaydi
+src/screens/ReferralScreen.tsx:*  # do'stni taklif qilish ekrani hech qayerdan ochilmaydi (havola yo'q)
+app/(account)/referral.tsx:*  # ReferralScreen yo'li; hech qayerdan ochilmaydi
+src/screens/GoogleCalendarIntegrationScreen.tsx:*  # faqat OpenWhispr hisobi bilan ochiladi (AccountScreen, `user &&`); Gapla'da hisob yo'q
+src/components/AccountCreatorLink.tsx:*  # AccountScreen'da chizilmaydi (faqat turi import qilingan)
+src/components/superwall/:*  # to'lov oynasi (Superwall) Gapla'da yo'q
+src/components/billing/:*  # to'lov tasdig'i; Gapla'da xarid yo'q
+src/components/ui/UsageMeter.tsx:*  # faqat OpenWhispr hisobi bilan ko'rinadi (AccountScreen, `user && usage`)
+
+# --- Ekranga chiqmaydigan kod ---
+src/db/:*  # ma'lumotlar bazasi (SQL) buyruqlari
+src/screens/ParakeetBenchmarkScreen.tsx:*  # dasturchi sinov ekrani (fayl izohi «Dev-only spike screen»); parakeet-benchmark yo'liga hech qaysi ekrandan havola yo'q
+src/lib/benchmark/runParakeetBenchmark.ts:*  # faqat ParakeetBenchmarkScreen ishlatadi, u ekran ochilmaydi
+app/(account)/_layout.tsx:Parakeet Benchmark  # dasturchi sinov ekrani sarlavhasi; hech qaysi ekrandan ochilmaydi
+src/lib/chat/chatContext.ts:*  # AI'ga yuboriladigan ko'rsatma va kontekst; ekranga chiqmaydi
+src/lib/chat/chatBudget.ts:Assistant:  # model uchun suhbat hajmini hisoblash; ekranga chiqmaydi
+src/lib/chat/chatBudget.ts:Aborted  # ichki bekor qilish xatosi; ekranga chiqmaydi
+src/lib/chat/runChatTurn.ts:Aborted  # ichki bekor qilish xatosi; ekranga chiqmaydi
+src/lib/chat/chatErrorMessage.ts:Could not read notes for chat  # ichki xato; ekranda o'zbekcha xabar chiqadi
+src/lib/chat/chatErrorMessage.ts:Chat answer was empty  # ichki xato; ekranda o'zbekcha xabar chiqadi
+
+# --- Brend, model va kutubxona nomlari (o'zbekcha gap ichida) ---
+src/screens/onboarding/steps/GraduationStep.tsx:Apple Notes  # Apple ilovasi nomi (brend)
+src/screens/AIModelsScreen.tsx:Apple Intelligence  # Apple brendi
+src/screens/WorkflowSettingsScreen.tsx:Apple Intelligence  # Apple brendi
+src/screens/WorkflowSettingsScreen.tsx:localhost  # texnik manzil nomi
+src/screens/PreferencesScreen.tsx:Dynamic Island  # Apple brendi
+src/screens/PreferencesScreen.tsx:Magic Keyboard  # Apple brendi
+src/screens/DiarizationModelScreen.tsx:Apple Neural Engine  # Apple brendi
+src/screens/HardwareKeyboardShortcutScreen.tsx:Option-D  # Mac tugmasi nomi
+src/screens/ModelDownloadScreen.tsx:Whisper base  # model nomi
+src/components/settings/ModelLanguagesButton.tsx:Whisper base  # model nomi
+src/screens/LicensesScreen.tsx:NVIDIA Parakeet TDT  # model nomi (litsenziya ro'yxati)
+src/screens/LicensesScreen.tsx:NVIDIA Corporation  # mualliflik huquqi yozuvi, o'zgarmaydi
+src/screens/LicensesScreen.tsx:whisper.cpp / whisper.rn  # kutubxona nomi
+src/screens/LicensesScreen.tsx:Georgi Gerganov and contributors  # mualliflik huquqi yozuvi, o'zgarmaydi
+src/lib/notes/localMeetingNotes.ts:Transform this meeting transcript  # AI'ga ko'rsatma (prompt)
+src/lib/notes/localMeetingNotes.ts:Previous chunk summary for continuity  # AI'ga ko'rsatma (prompt)
+src/lib/notes/localMeetingNotes.ts:Return only the important summary  # AI'ga ko'rsatma (prompt)
+src/lib/notes/localMeetingNotes.ts:Merge these partial structured meeting notes  # AI'ga ko'rsatma (prompt)
+src/lib/notes/meetingNotesInput.ts:*  # AI'ga yuboriladigan kirish matni (prompt quruvchi)
+src/services/diarization/VoiceprintService.ts:*  # ichki diagnostika sababi; ekranga xato kodi bo'yicha voiceEnrollmentMessages.ts matni chiqadi
+src/data/local/calendarRepository.ts:*  # SQL
+src/services/calendar/googleCalendarApi.ts:Bearer  # HTTP sarlavhasi
+src/services/calendar/googleCalendarAuth.ts:consent select_account  # OAuth parametri
+
+# --- iOS mahalliy kodi: loglar, HTTP sarlavhalari, qurish plaginlari ---
+plugins/keyboard-extension/ios/KeyboardViewController.swift:MARKER  # klaviatura logi (KeyboardLog.echo), ekranga chiqmaydi
+plugins/keyboard-extension/ios/KeyboardViewController.swift:Keyboard loaded. hasFullAccess=  # klaviatura logi
+plugins/keyboard-extension/ios/KeyboardViewController.swift:ageMs=\(ageMs)  # logRecordMarker izohi (log)
+plugins/keyboard-extension/ios/KeyboardViewController.swift:attempts=\(attempts)  # logRecordMarker izohi (log)
+plugins/keyboard-extension/ios/KeyboardViewController.swift:job=\(  # logRecordMarker izohi (log)
+plugins/keyboard-extension/ios/KeyboardViewController.swift:Issue state shown:  # klaviatura logi
+plugins/keyboard-extension/ios/KeyboardViewController.swift:Inserted pending transcript from app.  # klaviatura logi
+plugins/keyboard-extension/ios/KeyboardViewController.swift:Unable to open app-group defaults  # klaviatura logi
+plugins/keyboard-extension/ios/KeyboardViewController.swift:host detection failed  # ilova aniqlash logi
+plugins/keyboard-extension/ios/KeyboardViewController.swift:Host detected via KVC  # ilova aniqlash logi
+plugins/keyboard-extension/ios/KeyboardViewController.swift:return URL  # qaytish manzili logi
+plugins/keyboard-extension/ios/KeyboardViewController.swift:UUID().uuidString  # ish identifikatori, matn emas
+plugins/keyboard-extension/ios/KeyboardViewController.swift:agentReviewActiveIndex + 1  # «1/3» sahifa raqami, so'z yo'q
+plugins/keyboard-extension/ios/RecordingOrbView.swift:footprintMB=  # animatsiya statistikasi logi (Animatsiya sinovi), raqamlar
+plugins/keyboard-extension/ios/RecordingOrbView.swift:under0.1=  # ovoz darajasi statistikasi logi, raqamlar
+plugins/keyboard-extension/ios/GaplaClipboard.swift:Bearer  # HTTP sarlavhasi
+plugins/keyboard-extension/ios/GaplaClipboard.swift:Authorization  # HTTP sarlavhasi
+plugins/keyboard-extension/ios/GaplaClipboard.swift:Accept  # HTTP sarlavhasi
+plugins/keyboard-extension/ios/GaplaClipboard.swift:Content-Type  # HTTP sarlavhasi
+plugins/hotkey-dictation/ios/HotkeyDictationIntent.swift:Toggle \(.applicationName) dictation  # Siri iborasi: Siri o'zbekcha tushunmaydi, inglizcha qoladi
+plugins/keyboard-extension/withKeyboardExtension.js:*  # Xcode loyihasini quradigan plagin; ekran matni Info.plist'da (ios/Info.plist)
+plugins/activity-extension/withActivityExtension.js:*  # Xcode loyihasini quradigan plagin; ekran matni yo'q
+plugins/ios-cxx-standard/withIosCxxStandard.js:*  # Podfile qurish kodi
+plugins/pod-deployment-target/withPodDeploymentTarget.js:*  # Podfile qurish kodi
+plugins/speaker-diarization/withSpeakerDiarization.js:*  # Podfile qurish kodi va izohlari
+plugins/scene-lifecycle/withSceneLifecycle.js:*  # AppDelegate/Info.plist qurish kodi; sahna nomi ekranga chiqmaydi
+plugins/settings-bundle/withSettingsBundle.js:*  # bo'sh Settings.bundle (sarlavhasiz); plist XML va Xcode izohi
+app.base.json:$(PRODUCT_NAME)  # o'zbekcha; $(PRODUCT_NAME) - Xcode o'zgaruvchisi (ilova nomi)
+modules/app-group-storage/ios/AppGroupStorageModule.swift:Failed to configure audio session  # onRecordingError: JS faqat log qiladi va klaviatura holatiga yozadi; klaviatura o'z «Qayta urining» yozuvini ko'rsatadi
+modules/app-group-storage/ios/AppGroupStorageModule.swift:Failed to start audio engine  # onRecordingError: ekranga chiqmaydi (yuqoriga qarang)
+modules/app-group-storage/ios/AppGroupStorageModule.swift:Failed to create recording file  # onRecordingError: ekranga chiqmaydi
+modules/app-group-storage/ios/AppGroupStorageModule.swift:Recording stopped but no file URL  # onRecordingError: ekranga chiqmaydi
+modules/app-group-storage/ios/AppGroupStorageModule.swift:source=\(  # logMarker izohi (kalit=qiymat), log
+modules/app-group-storage/ios/AppGroupStorageModule.swift:frames=\(  # logMarker izohi, log
+modules/app-group-storage/ios/AppGroupStorageModule.swift:trigger=\(  # logMarker izohi, log
+modules/app-group-storage/ios/AppGroupStorageModule.swift:bytes=\(  # logMarker izohi, log
+modules/app-group-storage/ios/AppGroupStorageModule.swift:attempt=\(  # logMarker izohi, log
+modules/app-group-storage/ios/AppGroupStorageModule.swift:reason=\(  # logMarker izohi, log
+modules/app-group-storage/ios/AppGroupStorageModule.swift:codec=  # logMarker izohi, log
+modules/app-group-storage/ios/AppGroupStorageModule.swift:UUID().uuidString  # ish identifikatori
+modules/app-group-storage/ios/ReturnTargetResolver.swift:*  # ilova nomlari (brend, «Back to <ilova>» uchun); qurilmadagi ilova nomi bilan bir xil qoladi
+modules/apple-llm/ios/AppleLLMModule.swift:Apple Foundation Models  # o'zbekcha; Apple Foundation Models - Apple mahsulot nomi
+modules/audio-tools/ios/AudioToolsModule.swift:16 kHz mono format  # o'zbekcha; «mono» - audio atamasi
+modules/audio-tools/ios/AudioToolsModule.swift:String(format:  # vaqtinchalik fayl nomi
+modules/background-uploader/ios/BackgroundUploaderModule.swift:for recovery  # PROVIDER_RECOVERY_UNAVAILABLE: JS o'z matni bilan almashtiradi (ProviderExecution.ts, FINAL_NATIVE_FAILURES)
+modules/background-uploader/ios/BackgroundUploaderModule.swift:Unable to prepare the recorded audio for upload.  # PROVIDER_AUDIO_UNAVAILABLE: JS o'z matni bilan almashtiradi
+modules/background-uploader/ios/BackgroundUploaderModule.swift:Provider request  # iOS fon vazifasi nomi (beginBackgroundTask), ekranga chiqmaydi
+modules/background-uploader/ios/BackgroundUploaderModule.swift:Content-  # HTTP sarlavhasi
+modules/background-uploader/ios/BackgroundUploaderModule.swift:multipart/form-data  # HTTP sarlavhasi
+modules/background-uploader/ios/ProviderRequestTransport.swift:*  # xato matnlarini JS kod bo'yicha o'z matni bilan almashtiradi (ProviderExecution.ts, normalizeTransportFailure); HTTP sarlavhalari
+modules/creator-link-input/:*  # faqat AccountCreatorLink ishlatadi, u chizilmaydi (yuqoridagi istisno)
+
+# --- Qaydlar bo'limi: ikonka nomlari, AI ko'rsatmalari, SQL, ichki yozuvlar ---
+src/components/notes/NoteShareSheet.tsx:Lock  # ikonka nomi
+src/components/notes/NoteShareSheet.tsx:Globe  # ikonka nomi
+src/components/notes/NoteShareSheet.tsx:Building2  # ikonka nomi
+src/components/notes/NoteShareSheet.tsx:Users  # ikonka nomi
+src/components/notes/NoteSharePrincipal.tsx:Users  # ikonka nomi
+src/components/notes/NoteSharePrincipal.tsx:Folder  # ikonka nomi
+src/components/notes/NoteSharePrincipal.tsx:Building2  # ikonka nomi
+src/components/notes/NoteSharePrincipal.tsx:Mail  # ikonka nomi
+src/screens/NoteEditorScreen.tsx:Mic  # ikonka nomi
+src/components/notes/MarkdownRenderer.tsx:if (lastIndex  # kod bo'lagi (tekshiruvchi JSX matni deb o'qiydi)
+src/components/notes/MarkdownRenderer.tsx:segments  # kod bo'lagi
+src/hooks/useNoteSharing.ts:fetch failed  # tarmoq xatosini taniydigan solishtirish
+src/sync/syncEngine.ts:fetch failed  # tarmoq xatosini taniydigan solishtirish
+src/sync/syncEngine.ts:network-level error  # sinxronlash logi
+src/lib/groupNotesByDate.ts:May  # o'zbekcha oy nomi ham «May»
+src/lib/notes/regenerableNoteTitle.ts:*  # eski va kompyuter ilovasidagi qayd nomlarini taniydigan ro'yxat
+src/lib/notes/chatOverNote.ts:*  # AI'ga ko'rsatma va kontekst (prompt)
+src/lib/notes/generateNotesPrompt.ts:*  # AI'ga ko'rsatma (prompt)
+src/data/local/notesRepository.ts:*  # SQL va ichki xato matni
+src/data/local/chatRepository.ts:*  # SQL
+src/sync/pullFoldersTeam.ts:parked at  # sinxronlashning ichki holat yozuvi
+src/sync/pullNotesTeam.ts:parked at  # sinxronlashning ichki holat yozuvi
+src/sync/pushFolders.ts:for folder  # Sentry yozuvi
+src/sync/syncContext.ts:Sync context changed  # ichki xato (SyncCancelledError)
+
+# --- Bosh ekran, umumiy kutubxonalar: AI ko'rsatmalari, sarlavhalar, yashirin oqimlar ---
+src/services/agent/composerPrompt.ts:*  # butun fayl AI'ga ko'rsatma (prompt)
+src/services/reasoning/buildProviderPrompt.ts:*  # AI'ga ko'rsatma (prompt)
+src/utils/generateTitle.ts:Generate a concise  # AI'ga ko'rsatma (prompt)
+src/services/agent/AgentComposerService.ts:Write a different version  # AI'ga ko'rsatma (prompt)
+src/services/agent/AgentComposerService.ts:Revise your latest version  # AI'ga ko'rsatma (prompt)
+src/lib/sharedDictionaryHints.ts:Shared team dictionary  # AI'ga ko'rsatma (prompt)
+src/services/providers/ProviderExecution.ts:Reply with OK  # ulanish sinovida AI'ga ko'rsatma
+src/services/providers/ProviderExecution.ts:provider connection test  # ulanish sinovida AI'ga ko'rsatma
+src/services/providers/ProviderExecution.ts:Bearer  # HTTP sarlavhasi
+src/lib/affiliateAttribution.ts:Bearer  # HTTP sarlavhasi
+src/lib/referralApi.ts:Cookie  # HTTP sarlavhasi
+src/lib/fonts.ts:Yowza  # shrift nomi
+src/components/ui/Input.tsx:Input  # komponent nomi (displayName)
+src/lib/localModelCatalog.ts:Whisper base  # model nomi
+src/services/transcription/LocalTranscriptionService.ts:Whisper base  # model nomi
+src/lib/permissions.ts:no speech  # server xato matnini tanish uchun (isNoSpeechError)
+src/lib/permissions.ts:audio too short  # server xato matnini tanish uchun
+src/lib/permissions.ts:minimum audio length  # server xato matnini tanish uchun
+src/lib/permissions.ts:recording file is empty  # xato matnini tanish uchun
+src/store/useModelDownloadStore.ts:npx expo run:ios  # dasturchi buyrug'i; faqat to'liq bo'lmagan yig'mada chiqadi
+src/components/features/ParakeetNudgeBanner.tsx:*  # chizilmaydi: HomeScreen faqat import qiladi
+src/components/ui/PlanBadge.tsx:*  # faqat OpenWhispr hisobi bilan (`user ?`); Gapla'da hisob yo'q
+src/lib/alerts.ts:Delete Account  # hisobni o'chirish faqat `user && !isAnonymous` da; Gapla'da hisob yo'q
+src/lib/alerts.ts:permanently deletes your Gapla account  # hisobni o'chirish oynasi; Gapla'da hisob yo'q
+src/lib/alerts.ts:Delete Failed  # hisobni o'chirish oynasi; Gapla'da hisob yo'q
+src/lib/alerts.ts:Unable to delete account  # hisobni o'chirish oynasi; Gapla'da hisob yo'q
+src/store/useAffiliateStore.ts:*  # creator havolasi: ReferralScreen va PaywallStep yashirin, Gapla'da to'lov yo'q
+src/lib/affiliatePaywall.ts:*  # to'lov oynasi (Superwall) Gapla'da yo'q
+src/lib/affiliateLink.ts:creator link  # creator havolasi oqimi yashirin
+src/hooks/useUsageLimitRecovery.ts:*  # haftalik bulut limiti faqat Cloud 429 dan; Gapla ko'prik orqali, mehmonga bulut yopiq
+src/lib/usageLimitError.ts:Weekly word limit reached  # faqat bulut 429; ekranga chiqmaydi
+src/services/transcription/wordLimit.ts:Weekly word limit reached  # faqat bulut 429
+src/lib/accountRequiredError.ts:Create an account to use this feature  # standart xabar; o'rniga hisob oynasi chiqadi
+src/lib/authClient.ts:failed  # kirish va ro'yxatdan o'tish xatosi; kirish ekrani Gapla'da yo'q
+src/store/useAuthStore.ts:failed  # kirish va hisob o'chirish xatosi; kirish ekrani Gapla'da yo'q
+src/services/transcription/parakeetModelDownloader.ts:*  # yuklash boshidayoq rad etiladi (HUGGINGFACE_BASE_URL bo'sh); rad xabari o'zbekcha
+src/services/transcription/RealtimeMeetingWsService.ts:Realtime session ended  # bulut uchrashuvi faqat haqiqiy hisob bilan
+src/services/transcription/TranscriptionService.ts:Transcription error:  # OpenWhispr bulut xatosi o'rami; Gapla bulutga yubormaydi

@@ -1,0 +1,134 @@
+# Gapla iPhone/iPad ilovasini (OpenWhispr asosida) GitHub'ning Mac serverida yig'adi. Natija: Actions sahifasida
+# «gapla-ios-ipa» fayli (imzosiz IPA); telefonga iloader yoki SideStore egasining bepul Apple ID'si bilan o'rnatadi.
+# Bu repo — ochiq NUSXA: asl kod yopiq Gapla-Keyboard reposida (loyihalar/loyiha-gapla-keyboard-ios/kod), bu yerga
+# loyihalar/loyiha-gapla-keyboard-ios/ochiq-nusxa/yangila.py qo'yadi. Ochiq repoda Mac daqiqalari bepul (G54, 2026-11-12).
+# Kalit yo'q: diktovka kaliti telefonda kiritiladi.
+name: Gapla iOS IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gapla-ios-ipa
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 75
+    env:
+      OPENWHISPR_APP_ENV: production
+      EXPO_NO_TELEMETRY: "1"
+      SENTRY_DISABLE_AUTO_UPLOAD: "true"
+      # Ilova va kengaytmalar SideStore'da shu App Group bilan bog'lanadi (SideStore oxiriga jamoa ID qo'shadi).
+      GAPLA_APP_GROUP: group.uz.gapla.keyboard
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Eski izlar tekshiruvi (Gapla)
+        # Asl loyihaning (OpenWhispr) foydalanuvchi ko'radigan izi qolsa, yig'ish shu yerda to'xtaydi.
+        # Qoidalar: gapla-taqiqlangan.txt, istisnolar: gapla-iz-istisno.txt.
+        run: node scripts/gapla-iz-tekshir.mjs
+
+      - name: Til tekshiruvi (Gapla, faqat o'zbekcha)
+        # Ekranda inglizcha matn qolsa yoki yangisi qo'shilsa, yig'ish shu yerda to'xtaydi (G51).
+        # So'zlar: gapla-inglizcha-sozlar.txt, istisnolar: gapla-til-istisno.txt.
+        run: node scripts/gapla-til-tekshir.mjs
+
+      - name: Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          # 3.4 da `kconv` (nkf) yo'q — CocoaPods 1.16.2 «cannot load such file -- kconv» bilan yiqiladi.
+          ruby-version: "3.3"
+
+      - name: CocoaPods (cocoapods-spm bilan)
+        # Gemfile.lock faqat arm64-darwin-22 ni biladi; GitHub serveri boshqa platforma.
+        run: |
+          bundle lock --add-platform ruby
+          bundle install --jobs 4
+
+      - name: npm paketlari
+        run: npm ci
+
+      - name: iOS loyihasini yasash (expo prebuild)
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: CocoaPods keshi
+        uses: actions/cache@v4
+        with:
+          path: ios/Pods
+          key: gapla-ios-pods-${{ hashFiles('package-lock.json', 'Gemfile.lock') }}
+
+      - name: pod install
+        working-directory: ios
+        run: bundle exec pod install
+
+      - name: Yig'ish (imzosiz)
+        run: |
+          set -o pipefail
+          WS=$(ls -d ios/*.xcworkspace | head -1)
+          SCHEME=$(basename "$WS" .xcworkspace)
+          echo "Workspace: $WS, scheme: $SCHEME"
+          xcodebuild -workspace "$WS" -scheme "$SCHEME" -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build-ios \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -quiet build 2>&1 | tee xcodebuild.log
+
+      - name: IPA (App Group imzoga yoziladi)
+        run: |
+          set -euo pipefail
+          brew install ldid
+          APP=$(find build-ios/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
+          cat > gapla.entitlements <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.application-groups</key>
+            <array><string>${GAPLA_APP_GROUP}</string></array>
+          </dict>
+          </plist>
+          EOF
+          sign() {
+            local bundle="$1"
+            local exe
+            exe=$(/usr/libexec/PlistBuddy -c "Print CFBundleExecutable" "$bundle/Info.plist")
+            ldid -Sgapla.entitlements "$bundle/$exe"
+            echo "imzolandi: $bundle ($(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$bundle/Info.plist"))"
+          }
+          for ext in ipa/Payload/*.app/PlugIns/*.appex; do sign "$ext"; done
+          sign "$(ls -d ipa/Payload/*.app | head -1)"
+          (cd ipa && zip -qry ../Gapla.ipa Payload)
+          ls -lh Gapla.ipa
+
+      - name: IPA ni yuklash
+        uses: actions/upload-artifact@v4
+        with:
+          name: gapla-ios-ipa
+          path: Gapla.ipa
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Xato bo'lsa — yig'ish jurnali
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gapla-ios-xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 3
+          if-no-files-found: ignore

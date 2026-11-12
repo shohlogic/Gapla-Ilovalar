@@ -1,0 +1,141 @@
+import React, { useCallback, useState } from 'react';
+import { TextInput, View } from 'react-native';
+import { Text } from '@/components/ui/Text';
+import { SettingsScreen } from '@/components/ui/SettingsScreen';
+import { SettingsRow, SettingsSection } from '@/components/ui/SettingsSection';
+import { SettingsSwitch } from '@/components/ui/SettingsSwitch';
+import { useConfigStore } from '@/store/useConfigStore';
+import { useConfigToggle } from '@/hooks/useConfigToggle';
+import { useProcessingModeStore } from '@/store/useProcessingModeStore';
+import { getDictationAgentName, isDictationAgentEnabled } from '@/lib/dictationAgent';
+import { safeHaptics } from '@/lib/utils';
+import { iosColor } from '@/config/colors';
+import { AppFont } from '@/lib/fonts';
+
+const DEFAULT_AGENT_NAME = 'Gapla';
+
+export function DictationAgentScreen(): React.JSX.Element {
+  const config = useConfigStore((state) => state.config);
+  const updateConfig = useConfigStore((state) => state.updateConfig);
+  const activeMode = useProcessingModeStore((state) => state.activeMode);
+
+  const agentSelected = !!config?.inference?.agent;
+  // Bring Your Own Key skips the assistant until it has a selection of its own.
+  const unavailableNotice =
+    activeMode === 'providers' && !agentSelected
+      ? "«O'z kalitingiz» rejimida AI modellari bo'limida ovozli yordamchi uchun xizmat tanlanmaguncha u ishlamaydi. Sozlamalaringiz saqlangan, xizmat tanlasangiz ishlaydi."
+      : null;
+  const isAvailable = !unavailableNotice;
+  const enabled = config ? isDictationAgentEnabled(config) : true;
+  const shareContext = config?.dictationAgentShareContext ?? false;
+  const currentName = config ? getDictationAgentName(config) : DEFAULT_AGENT_NAME;
+
+  const [nameValue, setNameValue] = useState(currentName);
+
+  const handleToggleEnabled = useCallback(
+    (value: boolean): void => {
+      safeHaptics('light');
+      void updateConfig({ dictationAgentEnabled: value });
+    },
+    [updateConfig],
+  );
+  const handleToggleShareContext = useConfigToggle('dictationAgentShareContext');
+
+  const commitName = useCallback((): void => {
+    const trimmed = nameValue.trim();
+    // Empty or whitespace-only falls back to default — persist undefined so
+    // getDictationAgentName's default kicks in rather than storing an empty string.
+    const nextName = trimmed.length > 0 ? trimmed : undefined;
+    safeHaptics('light');
+    updateConfig({ dictationAgentName: nextName });
+    setNameValue(trimmed.length > 0 ? trimmed : DEFAULT_AGENT_NAME);
+  }, [nameValue, updateConfig]);
+
+  return (
+    <View className="flex-1 bg-systemBackground">
+      <SettingsScreen keyboardShouldPersistTaps="handled">
+        <View className="mx-4 mb-2 px-4">
+          <Text className="text-[13px] text-secondaryLabel">
+            Gapla klaviaturasidagi sehrli tayoqcha tugmasini bosing va nima yozish kerakligini
+            ayting: masalan, javob yoki belgilangan matnni qayta yozish. Yordamchi matnni
+            tayyorlaydi, siz uni kiritasiz, qayta yaratasiz yoki o'zgartirasiz. Diktovka paytida
+            uning nomini aytish buyruq bo'lmaydi. Yordamchi AI modellari bo'limida Ovozli yordamchi
+            uchun tanlangan AI'da ishlaydi, Diktovka qaysi AI'ni ishlatishidan qat'i nazar.
+          </Text>
+        </View>
+
+        {unavailableNotice ? (
+          <View className="mx-4 mb-3">
+            <View
+              className="rounded-[14px] border border-separator bg-secondarySystemGroupedBackground px-4 py-3"
+              style={{ borderCurve: 'continuous' }}
+            >
+              <Text className="text-[13px] text-secondaryLabel">{unavailableNotice}</Text>
+            </View>
+          </View>
+        ) : null}
+
+        <SettingsSection>
+          <SettingsRow
+            iconStyle="line"
+            icon="person.wave.2"
+            mdIcon="UserRoundCog"
+            title="Ovozli yordamchini yoqish"
+            description="Gapla klaviaturasidagi sehrli tayoqcha tugmasini yoqadi."
+            rightElement={
+              <SettingsSwitch
+                // Shows what runs: the voice assistant is off wherever it can't run.
+                value={enabled && isAvailable}
+                onValueChange={handleToggleEnabled}
+                disabled={!isAvailable}
+              />
+            }
+            showChevron={false}
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Yordamchi nomi">
+          <View className="px-4 py-3">
+            <TextInput
+              value={nameValue}
+              onChangeText={setNameValue}
+              onBlur={commitName}
+              onSubmitEditing={commitName}
+              placeholder={DEFAULT_AGENT_NAME}
+              placeholderTextColor={iosColor('tertiaryLabel')}
+              autoCapitalize="words"
+              autoCorrect={false}
+              returnKeyType="done"
+              editable={isAvailable}
+              className={`text-[17px] text-label ${isAvailable ? '' : 'opacity-40'}`}
+              style={{ fontFamily: AppFont.regular }}
+            />
+          </View>
+        </SettingsSection>
+        <View className="mx-4 -mt-5 mb-7 px-4">
+          <Text className="text-[13px] text-secondaryLabel">
+            Yordamchiga nima yozishni aytayotganingizda klaviaturada ko'rinadi.
+          </Text>
+        </View>
+
+        <SettingsSection>
+          <SettingsRow
+            iconStyle="line"
+            icon="text.cursor"
+            mdIcon="TextCursor"
+            title="Kursor atrofidagi matnni yuborish"
+            description="Ovozli yordamchidan foydalanganda belgilangan matn doim yuboriladi. Bu yoqilsa, kursor atrofidagi matn ham yuboriladi. Odatda o'chiq."
+            rightElement={
+              <SettingsSwitch
+                value={shareContext}
+                onValueChange={handleToggleShareContext}
+                disabled={!isAvailable}
+              />
+            }
+            showChevron={false}
+          />
+        </SettingsSection>
+      </SettingsScreen>
+    </View>
+  );
+}

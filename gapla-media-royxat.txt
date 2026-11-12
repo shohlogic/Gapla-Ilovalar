@@ -1,0 +1,20 @@
+# Gapla iz tekshiruvi (scripts/gapla-iz-tekshir.mjs): ko'rib chiqilgan rasm, video va animatsiya fayllari.
+# Rasm ichidagi yozuvni skript o'qiy olmaydi, shuning uchun har fayl ko'z bilan tekshirilib shu yerga yoziladi.
+# Format:  <sha256>  <fayl yo'li>  # nima ko'rsatadi, kim ko'rdi, sana
+# Yangi yoki o'zgargan fayl shu ro'yxatda bo'lmasa, tekshiruv (va GitHub'dagi yig'ish) to'xtaydi.
+
+366a624355c759173a1cb356a15611620b05ad0c022be4e56a8256e4e3829398  assets/icon.png  # Gapla belgisi (kursor va to'lqin chiziqlari), ilova belgisi; eski brend yo'q — Claude ko'rdi, 2026-11-12
+5f4c0a732b6325bf4071d9124d2ae67e037cb24fcc9c482ef82bea742109a3b8  assets/adaptive-icon.png  # Expo andozasining katak va doiralari; faqat Android, iOS'da ishlatilmaydi; eski brend yo'q — Claude ko'rdi, 2026-11-12
+24272cdaeff82cc5facdaccd982a6f05b60c4504704bbf94c19a6388659880bb  assets/favicon.png  # Expo andozasining kub belgisi; faqat veb, iOS'da ishlatilmaydi; eski brend yo'q — Claude ko'rdi, 2026-11-12
+d0674607a2871bcaf108c445fb8219ad6ed441c01f2a89699f00bf720c3b85a0  assets/onboarding/app-icons/apple-notes.png  # boshqa ilova belgisi (apple-notes), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+bfc668250cba2cd8709c63ea01ec9eb674973829b55f54d3cf69aef2bd100c10  assets/onboarding/app-icons/chatgpt.png  # boshqa ilova belgisi (chatgpt), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+c0e62b9671b6186283074a91e262f26ca70714208f2390e00dc438e733931c8e  assets/onboarding/app-icons/chrome.png  # boshqa ilova belgisi (chrome), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+53d6357278deb69f1215b8e289e3042792e7b128d42320092db0a0e31b0821b2  assets/onboarding/app-icons/claude.png  # boshqa ilova belgisi (claude), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+d58128a74f427bff2abe8b800ca9227b17c90677c272614379c2925e73fec8b2  assets/onboarding/app-icons/gmail.png  # boshqa ilova belgisi (gmail), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+0e525542b3085ae715b63fc6ced422ee7434ad7d19f39b1a1039b421df84aecb  assets/onboarding/app-icons/mail.png  # boshqa ilova belgisi (mail), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+9285750806570e30ec8e1750187286d9d7bdb07282dc265c399a42efce4815b3  assets/onboarding/app-icons/outlook.png  # boshqa ilova belgisi (outlook), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+8a2f38212268bcbb731915c4b426f8841f912d4c5f1ca7aee2607de1006e6714  assets/onboarding/app-icons/safari.png  # boshqa ilova belgisi (safari), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+d8ecdb2d0c9feebae7246c81c38f1d2c0cbaacf41fcdda24eb7f7ec22ab661d2  assets/onboarding/app-icons/slack.png  # boshqa ilova belgisi (slack), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+c1794917c5d63dd8d2805206e652fafb3c1d3988d50dc2a1641f4df537591fa1  assets/onboarding/app-icons/whatsapp.png  # boshqa ilova belgisi (whatsapp), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+803af41566156e2635f01b33c8e47762ce5248fcc7a7cf5e5748014c34982e4b  assets/onboarding/app-icons/x.png  # boshqa ilova belgisi (x), «istalgan ilovada» animatsiyasi uchun; eski brend yo'q — Claude ko'rdi, 2026-11-12
+6455f3a59e3f7f0d368684a60ed008587f6972f4b99f21457d289c1b192d378b  modules/pip-tutorial/ios/Resources/keyboard-install.mp4  # klaviaturani yoqish qadamlari (PiP video): o'zbekcha 5 qadam, «Gapla'ni yoqing» — eski «Enable OpenWhispr» o'rniga; Claude yasadi va ko'rdi, 2026-11-12

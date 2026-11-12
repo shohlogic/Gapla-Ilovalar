@@ -1,0 +1,149 @@
+{
+  "expo": {
+    "name": "Gapla",
+    "slug": "gapla-ios",
+    "scheme": "gapla",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#1C1917"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "uz.gapla.keyboard",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Gapla nutqingizni matnga aylantirishi uchun mikrofon kerak.",
+        "CFBundleAllowMixedLocalizations": true,
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "NSSupportsLiveActivities": true,
+        "LSApplicationQueriesSchemes": [
+          "whatsapp",
+          "slack",
+          "twitter",
+          "x"
+        ]
+      },
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
+          }
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "uz.gapla.keyboard",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
+          }
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Nutqingizni matnga aylantirish uchun $(PRODUCT_NAME) ilovasiga mikrofondan foydalanishga ruxsat bering.",
+          "enableBackgroundRecording": true
+        }
+      ],
+      "./plugins/provider-networking/withProviderNetworking",
+      "./plugins/ios-cxx-standard/withIosCxxStandard",
+      "./plugins/pod-deployment-target/withPodDeploymentTarget",
+      "./plugins/scene-lifecycle/withSceneLifecycle",
+      "./modules/background-uploader/app.plugin",
+      "./plugins/storekit/withStoreKitConfiguration",
+      "./plugins/keyboard-extension/withKeyboardExtension",
+      "./plugins/activity-extension/withActivityExtension",
+      "./plugins/settings-bundle/withSettingsBundle",
+      "./plugins/hotkey-dictation/withHotkeyDictation",
+      "./plugins/speaker-diarization/withSpeakerDiarization",
+      "expo-web-browser",
+      "expo-image",
+      "expo-video",
+      "expo-router",
+      "expo-secure-store",
+      "expo-sqlite",
+      "expo-sharing",
+      "expo-asset",
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "color": "#BC4B1C"
+        }
+      ],
+      [
+        "expo-tracking-transparency",
+        {
+          "userTrackingPermission": "Gapla sizni kuzatmaydi. Rad etishingiz mumkin."
+        }
+      ],
+      "react-native-appsflyer"
+    ],
+    "experiments": {
+      "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "OpenWhisprKeyboard",
+                  "bundleIdentifier": "uz.gapla.keyboard.keyboard",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.uz.gapla.keyboard"
+                    ]
+                  }
+                },
+                {
+                  "targetName": "OpenWhisprActivity",
+                  "bundleIdentifier": "uz.gapla.keyboard.activity",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.uz.gapla.keyboard"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "enabled": false
+    }
+  }
+}

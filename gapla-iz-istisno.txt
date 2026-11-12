@@ -1,0 +1,10 @@
+# Eski izlar tekshiruvi istisnolari. Format:  fayl/yo'li:matn bo'lagi   # sababi
+# Faqat ichki (foydalanuvchi ko'rmaydigan) qiymatlar uchun; har qatorda sabab SHART.
+src/lib/authClient.ts:anon.openwhispr.invalid  # soxta ichki e-pochta domeni (anonim sessiya belgisi); foydalanuvchiga ko'rsatilmaydi, .invalid manziliga xat ketmaydi
+plugins/hotkey-dictation/withHotkeyDictation.js:OpenWhispr  # Xcode loyiha nomi zaxirasi (projectName bo'lmasa); yig'ishda Gapla nomi beriladi, ekranga chiqmaydi
+plugins/settings-bundle/withSettingsBundle.js:OpenWhispr  # Xcode loyiha nomi zaxirasi (projectName bo'lmasa); ekranga chiqmaydi
+plugins/storekit/withStoreKitConfiguration.js:OpenWhispr  # Xcode loyiha nomi zaxirasi (projectName bo'lmasa); ekranga chiqmaydi
+plugins/keyboard-extension/withKeyboardExtension.js:OpenWhispr  # ilova nomi zaxirasi (displayName va name bo'lmasa); Gapla sozlamasida nom bor (app.base.json)
+src/lib/diarization/transcriptDisplay.ts:'#007AFF',  # gapiruvchilarni bir-biridan ajratuvchi 8 ta toifa rangidan biri (ko'k), Gapla urg'usi emas (G54)
+src/screens/onboarding/steps/GraduationStep.tsx:iconBg: '#007AFF',  # Apple «Pochta» ilovasi belgisining zaxira foni (belgi rasmi bo'lmasa) — begona ilova rangi (G54)
+src/screens/onboarding/steps/GraduationStep.tsx:iconBg: '#0A84FF',  # Safari belgisining zaxira foni (belgi rasmi bo'lmasa) — begona ilova rangi (G54)
