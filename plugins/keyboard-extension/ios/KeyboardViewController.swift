@@ -43,9 +43,9 @@ private enum Palette {
   // Disabled return: key (191,193,197) / (116,116,116), glyph (172,173,177) / (129,129,129).
   static let keyDisabledBackground = dynamic(light: UIColor(white: 0, alpha: 0.155), dark: UIColor(white: 1, alpha: 0.40))
   static let keyDisabledText = dynamic(light: rgb(172, 173, 177), dark: rgb(129, 129, 129))
-  // The prominent return key (Go, Search, Send, Done…) is system blue in both modes; held,
-  // it shows as a plain key (keyBackground, keyText glyph).
-  static let returnKeyProminent = rgb(0, 122, 255)
+  // The prominent return key (Go, Search, Send, Done…) is Gapla mandarin #BC4B1C in both modes (owner chose it over
+  // Apple's blue, 2026-11-12, G54): white glyph 5.05:1. Held, it shows as a plain key (keyBackground, keyText glyph).
+  static let returnKeyProminent = rgb(188, 75, 28)
   static let keyText = dynamic(light: .black, dark: .white)
   // Key preview balloon, opaque as Apple's in both modes: the key under it stays hidden (its
   // glyph shows through Apple's dark one by at most 3). No shadow.
@@ -1096,6 +1096,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private let clipboardRowsStack = UIStackView()
   private let clipboardButton = KeyButton(type: .system)
   private var clipboardPanel: GaplaClipboardPanel?
+  // Gapla (G41, G55): up to three words in the toolbar's place while typing (GaplaTavsiya.swift).
+  private let tavsiyaBar = GaplaTavsiyaBar(textColor: Palette.keyText, pressedColor: Palette.keyBackground)
+  /// The letters of the current word typed on the keys. A finished word counts toward the owner's list only when the
+  /// field shows the same letters before the cursor, so dictated or pasted text never counts.
+  private var tavsiyaTypedWord = ""
+  /// The last word counted, so the next one counts with it as a pair.
+  private var tavsiyaLastCounted: String?
   private let keyPopup = KeyPopupView()
   // One letter key's width, (row width − 9 gaps) / 10. Every key width is a multiple of
   // it, so the layout follows the screen width without any width constants.
@@ -1304,6 +1311,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     metrics = KeyboardMetrics.current(for: layoutInputs(width: layoutWidth))
     // G54: anything drawn in the default tint (system blue) takes the Gapla accent instead.
     view.tintColor = Palette.accentTint
+    GaplaTavsiya.shared.onChange = { [weak self] in self?.refreshTavsiya() }
     setupLayout()
     applyKeyboardHeight()
     refreshRecordButton()
@@ -1338,6 +1346,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     syncShiftWithContextIfNeeded()
     refreshFieldAwareKeys()
     _ = consumePendingTranscriptIfAvailable(trigger: "textDidChange")
+    refreshTavsiya()
+  }
+
+  // Gapla (G41): the cursor moved (a tap in the text): the suggestions follow the word under it.
+  override func selectionDidChange(_ textInput: UITextInput?) {
+    super.selectionDidChange(textInput)
+    refreshTavsiya()
   }
 
   // The field's text and traits may not be known at viewDidLoad, and iOS needn't send
@@ -1347,6 +1362,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     noteFieldReport()
     syncShiftWithContextIfNeeded()
     refreshFieldAwareKeys()
+    refreshTavsiya()
   }
 
   override func viewDidAppear(_ animated: Bool) {
@@ -1362,6 +1378,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     }
     KeyboardHandoffProvider.shared.markShown()
     KeyboardHandoffProvider.shared.storeHostReturnInfo(from: self)
+    // Gapla (G41): the saved word list, fetched again from the server when it is due.
+    GaplaTavsiya.shared.start(accessGroup: "group.\(Self.resolvedContainingAppBundleID)")
+    refreshTavsiya()
     refreshToneButton()
     refreshAgentButton()
     // The review card owns the screen until the user acts on it; don't let a
@@ -1395,6 +1414,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     resetRecordingOrbImmediately()
     // Gapla (G8): the clipboard list is never left open to go stale; it reloads when reopened.
     if layoutMode == .clipboard { returnToLetters() }
+    // Gapla (G41): what was counted is saved (and sent when due); the next opening starts a new run.
+    GaplaTavsiya.shared.flush()
+    tavsiyaTypedWord = ""
+    tavsiyaLastCounted = nil
     stopDeleteRepeating()
     issueResetTimer?.invalidate()
     waitForTranscriptTimer?.invalidate()
@@ -1424,6 +1447,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let text = layoutMode == .letters || output == "'"
       ? insertion
       : (smartQuoteSubstitution(for: insertion) ?? insertion)
+    // Gapla (G41): letters and the apostrophe build the word being typed; any other key ends it.
+    if text.count == 1, let character = text.first, GaplaTavsiya.isWordCharacter(character) {
+      tavsiyaTypedWord += text
+    } else {
+      countTypedWordIfFinished()
+    }
     typeText(text)
     if layoutMode != .letters {
       // Apple's apostrophe returns to letters at once ("rock 'n' roll", "'90s").
@@ -1448,6 +1477,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   @objc private func handleCommaLongPress(_ gesture: UILongPressGestureRecognizer) {
     guard gesture.state == .began else { return }
     playKeyClick()
+    countTypedWordIfFinished()
     typeText(".")
     syncShiftWithContextIfNeeded()
     refreshAfterEdit()
@@ -1499,6 +1529,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   @objc private func handleBackspaceTapped() {
     playKeyClick()
     textDocumentProxy.deleteBackward()
+    if !tavsiyaTypedWord.isEmpty { tavsiyaTypedWord.removeLast() }
     // "Hello. W" ⌫ starts a sentence again.
     syncShiftWithContextIfNeeded()
     refreshAfterEdit()
@@ -1508,6 +1539,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     switch gesture.state {
     case .began:
       (gesture.view as? KeyButton)?.isLongPressed = true
+      tavsiyaTypedWord = ""
       startDeleteRepeating()
     case .ended, .cancelled, .failed:
       (gesture.view as? KeyButton)?.isLongPressed = false
@@ -1539,6 +1571,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   @objc private func handleSpaceTapped() {
     playKeyClick()
+    countTypedWordIfFinished()
     if !applyDoubleSpacePeriod() {
       typeText(" ")
     }
@@ -1560,6 +1593,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     case .began:
       spaceCursorActive = true
       spaceCursorLastX = x
+      // The cursor leaves the word: it no longer counts as typed here.
+      tavsiyaTypedWord = ""
+      tavsiyaLastCounted = nil
       (gesture.view as? KeyButton)?.isLongPressed = true
       setSpaceCursorMode(true)
     case .changed:
@@ -1602,6 +1638,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   @objc private func handleShortcutTapped(_ sender: KeyButton) {
     guard let output = sender.output else { return }
     playKeyClick()
+    countTypedWordIfFinished()
     typeText(output)
     syncShiftWithContextIfNeeded()
     refreshAfterEdit()
@@ -1667,6 +1704,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     // Greyed: Apple's does nothing. Asked fresh, as hasText may have changed since the redraw.
     guard !isReturnKeyDisabled else { return }
     playKeyClick()
+    countTypedWordIfFinished()
     typeText("\n")
     syncShiftWithContextIfNeeded()
     refreshAfterEdit()
@@ -2447,6 +2485,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     agentPress.delegate = self
     agentButton.addGestureRecognizer(agentPress)
 
+    // Gapla (G41, G55, owner 2026-11-11: the keyboard does not grow): while he types, the suggestions take the left
+    // tools' place up to the dictation button, which stays (refreshTavsiya).
+    tavsiyaBar.translatesAutoresizingMaskIntoConstraints = false
+    tavsiyaBar.isHidden = true
+    tavsiyaBar.onPick = { [weak self] word in self?.handleTavsiyaPicked(word) }
+    tavsiyaBar.onForget = { [weak self] word in self?.handleTavsiyaForget(word) }
+    topBar.addSubview(tavsiyaBar)
+
     let topBarHeight = topBar.heightAnchor.constraint(equalToConstant: metrics.stripTop + metrics.stripHeight)
     topBarHeightConstraint = topBarHeight
     stripConstraints = [
@@ -2474,6 +2520,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       agentButton.centerYAnchor.constraint(equalTo: stripGuide.centerYAnchor),
       agentButton.widthAnchor.constraint(equalToConstant: Metrics.toolbarButtonSize),
       agentButton.heightAnchor.constraint(equalToConstant: Metrics.toolbarButtonSize),
+
+      tavsiyaBar.leadingAnchor.constraint(equalTo: stripGuide.leadingAnchor),
+      tavsiyaBar.trailingAnchor.constraint(equalTo: agentButton.leadingAnchor, constant: -Metrics.toolbarButtonInset),
+      tavsiyaBar.topAnchor.constraint(equalTo: stripGuide.topAnchor),
+      tavsiyaBar.bottomAnchor.constraint(equalTo: stripGuide.bottomAnchor),
 
       recordButton.centerXAnchor.constraint(equalTo: stripGuide.centerXAnchor),
       recordButton.centerYAnchor.constraint(equalTo: stripGuide.centerYAnchor),
@@ -2532,6 +2583,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func refreshAfterEdit() {
     noteFieldReport()
     refreshReturnKey()
+    refreshTavsiya()
   }
 
   private func typeText(_ text: String) {
@@ -3008,6 +3060,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       button.titleBaselineFromCenter = modeLabel.baseline
     }
     refreshFieldAwareKeys()
+    refreshTavsiya()
   }
 
   /// The 123 and #+= pages are built the first time they show: built up front, they held
@@ -3138,6 +3191,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   @objc private func handleEmojiTapped(_ sender: UIButton) {
     guard let emoji = sender.title(for: .normal) else { return }
     playKeyClick()
+    countTypedWordIfFinished()
     typeText(emoji)
     rememberEmoji(emoji)
     refreshAfterEdit()
@@ -3196,6 +3250,129 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     refreshVisibleKeyboardMode() // builds the page the first time
     refreshShiftState()
     clipboardPanel?.open()
+  }
+
+  // MARK: Gapla word suggestions (G41, G55)
+
+  /// While a word is being typed, or right after one and a space, the toolbar's left side shows up to three words from
+  /// the owner's list (GaplaTavsiya.swift); otherwise the toolbar. The dictation button on the right always stays, and
+  /// the keyboard keeps its height (owner, 2026-11-11).
+  private func refreshTavsiya() {
+    let shown = tavsiyaItems()
+    tavsiyaBar.isHidden = shown == nil
+    toneButton.isHidden = shown != nil
+    clipboardButton.isHidden = shown != nil
+    if let shown { tavsiyaBar.show(shown.words, literal: shown.literal) }
+  }
+
+  /// The words to show, best first; nil shows the toolbar. `literal`: nothing in the list matches the word being
+  /// typed, so it is shown as typed, in quotes.
+  private func tavsiyaItems() -> (words: [String], literal: Bool)? {
+    guard hasFullAccess, recordButton.isHidden, !isAgentReviewShown, !recordingOrb.isShowing,
+          layoutMode == .letters || layoutMode == .numbers || layoutMode == .symbols,
+          tavsiyaFieldAllowed, GaplaTavsiya.shared.hasWords
+    else { return nil }
+    let proxy = textDocumentProxy
+    guard (proxy.selectedText ?? "").isEmpty,
+          let before = proxy.documentContextBeforeInput,
+          let context = GaplaTavsiya.Context(before: before)
+    else { return nil }
+    // Letters after the cursor too: it stands inside a word, which a suggestion would split.
+    if let next = proxy.documentContextAfterInput?.first, GaplaTavsiya.isWordCharacter(next) { return nil }
+    let found = GaplaTavsiya.shared.suggest(partial: context.partial, previous: context.previous)
+    if found.isEmpty {
+      return context.partial.isEmpty ? nil : ([context.partial], true)
+    }
+    return (found.map { tavsiyaCased($0, partial: context.partial) }, false)
+  }
+
+  /// A suggestion takes the typed capitals: «Sal» → «Salom», «SG» → «SGBF», and a capital at a sentence's start.
+  private func tavsiyaCased(_ word: String, partial: String) -> String {
+    if isCapsLocked { return word.uppercased() }
+    guard let first = partial.first else {
+      return isShiftEnabled && layoutMode == .letters ? GaplaTavsiya.capitalizedFirst(word) : word
+    }
+    let letters = partial.filter { $0.isLetter }
+    if letters.count > 1 && letters.allSatisfy({ $0.isUppercase }) { return word.uppercased() }
+    return first.isUppercase ? GaplaTavsiya.capitalizedFirst(word) : word
+  }
+
+  /// Contract rule 6: no suggestions and no counting in password, e-mail, address, number or name-and-phone fields, or
+  /// where the field turns autocorrection off — Apple's keyboard hides its suggestions there too.
+  private var tavsiyaFieldAllowed: Bool {
+    let proxy = textDocumentProxy
+    if proxy.isSecureTextEntry == true { return false }
+    if (proxy.autocorrectionType ?? .default) == .no { return false }
+    switch proxy.keyboardType ?? .default {
+    case .emailAddress, .URL, .numberPad, .phonePad, .decimalPad, .numbersAndPunctuation, .asciiCapableNumberPad,
+      .namePhonePad:
+      return false
+    default:
+      return true
+    }
+  }
+
+  /// A tap on a suggestion: it replaces the word being typed and a space follows; it counts as a word he wrote.
+  private func handleTavsiyaPicked(_ word: String) {
+    playKeyClick()
+    let proxy = textDocumentProxy
+    let before = proxy.documentContextBeforeInput ?? ""
+    let context = GaplaTavsiya.Context(before: before)
+    let partial = context?.partial ?? ""
+    for _ in 0..<partial.count { proxy.deleteBackward() }
+    if hasFullAccess && tavsiyaFieldAllowed {
+      GaplaTavsiya.shared.countTyped(
+        word,
+        previous: context?.previous,
+        sentenceStart: GaplaTavsiya.isSentenceStart(context?.textBefore ?? before)
+      )
+    }
+    tavsiyaTypedWord = ""
+    tavsiyaLastCounted = word
+    if proxy.documentContextAfterInput?.first == " " {
+      typeText(word)
+      proxy.adjustTextPosition(byCharacterOffset: 1)
+    } else {
+      typeText(word + " ")
+    }
+    if layoutMode != .letters { returnToLetters() }
+    syncShiftWithContextIfNeeded()
+    refreshAfterEdit()
+  }
+
+  /// Holding a suggestion (owner's «unut»): the word is not offered again, here or on his other devices.
+  private func handleTavsiyaForget(_ word: String) {
+    playKeyClick()
+    GaplaTavsiya.shared.forget(word)
+    tavsiyaBar.showNote("\u{00AB}\(word)\u{00BB} unutildi")
+    refreshTavsiya()
+  }
+
+  /// A word typed on the keys has ended — space, return, punctuation or an emoji comes next. It counts toward the
+  /// owner's list (contract: only counts, never the sentence) when the field shows the same letters before the cursor.
+  private func countTypedWordIfFinished() {
+    let typed = tavsiyaTypedWord
+    tavsiyaTypedWord = ""
+    guard !typed.isEmpty, hasFullAccess, tavsiyaFieldAllowed,
+          let before = textDocumentProxy.documentContextBeforeInput,
+          let context = GaplaTavsiya.Context(before: before),
+          !context.partial.isEmpty,
+          context.partial.lowercased() == typed.lowercased()
+    else {
+      tavsiyaLastCounted = nil
+      return
+    }
+    // A pair only with the word counted just before, with nothing but spaces between them.
+    var previous: String?
+    if let candidate = context.previous, tavsiyaLastCounted?.lowercased() == candidate.lowercased() {
+      previous = candidate
+    }
+    GaplaTavsiya.shared.countTyped(
+      context.partial,
+      previous: previous,
+      sentenceStart: GaplaTavsiya.isSentenceStart(context.textBefore)
+    )
+    tavsiyaLastCounted = context.partial
   }
 
   private func refreshFieldAwareKeys() {
@@ -3783,6 +3960,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       shift.accessibilityLabel = isCapsLocked ? "doimiy bosh harf" : "bosh harf"
       shift.accessibilityTraits = isShiftEnabled ? [.button, .selected] : .button
     }
+    // Gapla (G41): the next-word suggestions follow shift's capitals.
+    refreshTavsiya()
   }
 
   private func syncShiftWithContextIfNeeded() {
@@ -4224,6 +4403,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     recordButtonBackground.isHidden = true
     resetVoiceMeterBars()
     refreshAgentButton()
+    // Gapla (G41): the pill is gone, so the suggestions may come back.
+    refreshTavsiya()
     logRecordMarker(
       "refreshRecordButton",
       extra:
@@ -4310,6 +4491,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     // (refreshRecordButton).
     recordButton.isHidden = false
     recordButtonBackground.isHidden = false
+    // Gapla (G41): a report in the pill (processing, an issue) takes the strip from the suggestions.
+    refreshTavsiya()
 
     // Plain config so the button draws no background of its own — the pill
     // background view behind the content provides it.
@@ -4547,6 +4730,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func insertSmartText(_ text: String) {
     guard !text.isEmpty else { return }
+    // Gapla (G41): dictated text is not counted here — the server learns it itself.
+    tavsiyaTypedWord = ""
+    tavsiyaLastCounted = nil
 
     let context = textDocumentProxy.documentContextBeforeInput ?? ""
     let needsLeadingSpace =

@@ -2,7 +2,7 @@
 # Egasi: [so'zlari: bilim/gapla-goyalar-royxati.md]; namuna — kompyuter ilovasi (5ef477e) Gapla ranglari.
 # Har qatorda bitta qiymat; katta-kichik harf va bo'sh joy farqsiz; kod, izoh va sozlamaning istalgan joyida qidiriladi.
 # Tekshiruv: node scripts/gapla-iz-tekshir.mjs  (istisno: gapla-iz-istisno.txt, 'fayl:bo'lak # sabab').
-# Apple'ning o'z «Return» tugmasi ko'ki (Palette.returnKeyProminent, G46) bu ro'yxatda yo'q — u Apple tugmasi rangi.
+# «Qidiruv/yuborish» tugmasi ham Gapla mandarinida (egasi 2026-11-12: «Gapla mandarini», Apple ko'ki o'rniga).
 
 # iOS ilovasidagi eski brend: tizim ko'ki va OpenWhispr logo gradienti
 #007aff
@@ -14,6 +14,7 @@
 #0e3690
 rgba(0,122,255
 rgba(21,75,212
+rgb(0,122,255
 platformcolor('systemblue')
 ios('systemblue'
 ios('link'

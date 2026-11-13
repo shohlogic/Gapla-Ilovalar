@@ -80,6 +80,10 @@ plugins/keyboard-extension/ios/GaplaClipboard.swift:Bearer  # HTTP sarlavhasi
 plugins/keyboard-extension/ios/GaplaClipboard.swift:Authorization  # HTTP sarlavhasi
 plugins/keyboard-extension/ios/GaplaClipboard.swift:Accept  # HTTP sarlavhasi
 plugins/keyboard-extension/ios/GaplaClipboard.swift:Content-Type  # HTTP sarlavhasi
+plugins/keyboard-extension/ios/GaplaTavsiya.swift:Bearer  # HTTP sarlavhasi
+plugins/keyboard-extension/ios/GaplaTavsiya.swift:Authorization  # HTTP sarlavhasi
+plugins/keyboard-extension/ios/GaplaTavsiya.swift:Accept  # HTTP sarlavhasi
+plugins/keyboard-extension/ios/GaplaTavsiya.swift:Content-Type  # HTTP sarlavhasi
 plugins/hotkey-dictation/ios/HotkeyDictationIntent.swift:Toggle \(.applicationName) dictation  # Siri iborasi: Siri o'zbekcha tushunmaydi, inglizcha qoladi
 plugins/keyboard-extension/withKeyboardExtension.js:*  # Xcode loyihasini quradigan plagin; ekran matni Info.plist'da (ios/Info.plist)
 plugins/activity-extension/withActivityExtension.js:*  # Xcode loyihasini quradigan plagin; ekran matni yo'q

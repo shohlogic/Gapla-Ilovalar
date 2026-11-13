@@ -22,6 +22,8 @@ const EXTENSION_FILES = [
   { name: 'RecordingOrbView.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   // Gapla (G8): the shared clipboard page and its server client.
   { name: 'GaplaClipboard.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
+  // Gapla (G41, G55): word suggestions from the owner's list on the Gapla server.
+  { name: 'GaplaTavsiya.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
 ];
 const BUILD_PHASE_ISA = {
   Sources: 'PBXSourcesBuildPhase',
