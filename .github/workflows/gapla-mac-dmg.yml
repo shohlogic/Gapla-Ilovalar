@@ -115,14 +115,26 @@ jobs:
             exit 1
           fi
           screencapture -x sinov/1-ochilish.png || echo "surat olinmadi" >> sinov/natija.txt
+          oldinda() { echo "$1: oldindagi ilova — $(lsappinfo info -only name "$(lsappinfo front)" 2>/dev/null | tr -d '\n')" >> sinov/natija.txt; }
+          oldinda "ochilgach"
           osascript -e 'tell application "System Events" to keystroke "t" using option down' >> sinov/natija.txt 2>&1 || echo "Option+T yuborilmadi" >> sinov/natija.txt
           sleep 4
+          oldinda "Option+T dan keyin"
           screencapture -x sinov/2-option-t-tarjimon.png || true
+          # Klaviatura tarjimon maydoniga tushadimi: matn yoziladi (kalit yo'q — tarjima o'rniga xato chiqishi kutiladi).
+          osascript -e 'tell application "System Events" to keystroke "salom dunyo"' >/dev/null 2>&1 || true
+          sleep 3
+          screencapture -x sinov/2b-tarjimonga-yozildi.png || true
           osascript -e 'tell application "System Events" to key code 53' >/dev/null 2>&1 || true
           sleep 2
+          oldinda "Esc dan keyin"
+          screencapture -x sinov/2c-esc-dan-keyin.png || true
           osascript -e 'tell application "System Events" to keystroke "b" using option down' >> sinov/natija.txt 2>&1 || echo "Option+B yuborilmadi" >> sinov/natija.txt
           sleep 4
           screencapture -x sinov/3-option-b-bufer.png || true
+          osascript -e 'tell application "System Events" to key code 53' >/dev/null 2>&1 || true
+          sleep 2
+          screencapture -x sinov/3b-esc-dan-keyin.png || true
           if kill -0 "$PID" 2>/dev/null; then echo "TIRIK: tugmalardan keyin ham ishlayapti" | tee -a sinov/natija.txt; else echo "QULADI: tugmalardan keyin yopildi" | tee -a sinov/natija.txt; fi
           kill "$PID" 2>/dev/null || true
           sleep 2
