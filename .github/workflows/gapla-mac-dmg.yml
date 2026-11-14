@@ -88,3 +88,52 @@ jobs:
           retention-days: 7
           if-no-files-found: error
           compression-level: 0
+
+      # Mac'siz jonli sinov (egasi 2026-11-14: «Ha, tekshir»): .dmg dan o'rnatiladi, ochiladi, 30 s dan keyin ham
+      # ishlab turganini, Option+T (tarjimon) va Option+B (bufer) oynasini suratga oladi. Mikrofon yo'q — ovoz sinalmaydi.
+      # Natija .dmg yig'ishini to'xtatmaydi; suratlar va jurnal «gapla-mac-sinov-…» faylida.
+      - name: Sinov — .dmg dan o'rnatish va ochish
+        id: sinov
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p sinov
+          DMG=$(ls dist/*.dmg | head -1)
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint /tmp/gapla-dmg
+          ls /tmp/gapla-dmg | tee sinov/dmg-ichi.txt
+          cp -R /tmp/gapla-dmg/Gapla.app /Applications/
+          hdiutil detach /tmp/gapla-dmg
+          spctl --assess --type execute -vv /Applications/Gapla.app > sinov/gatekeeper.txt 2>&1 || true
+          /Applications/Gapla.app/Contents/MacOS/Gapla --log-level=debug > sinov/ilova-chiqishi.log 2>&1 &
+          PID=$!
+          sleep 35
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "TIRIK: Gapla 35 soniyadan keyin ham ishlayapti" | tee sinov/natija.txt
+          else
+            echo "QULADI: Gapla 35 soniyaga yetmay yopildi" | tee sinov/natija.txt
+            tail -80 sinov/ilova-chiqishi.log
+            exit 1
+          fi
+          screencapture -x sinov/1-ochilish.png || echo "surat olinmadi" >> sinov/natija.txt
+          osascript -e 'tell application "System Events" to keystroke "t" using option down' >> sinov/natija.txt 2>&1 || echo "Option+T yuborilmadi" >> sinov/natija.txt
+          sleep 4
+          screencapture -x sinov/2-option-t-tarjimon.png || true
+          osascript -e 'tell application "System Events" to key code 53' >/dev/null 2>&1 || true
+          sleep 2
+          osascript -e 'tell application "System Events" to keystroke "b" using option down' >> sinov/natija.txt 2>&1 || echo "Option+B yuborilmadi" >> sinov/natija.txt
+          sleep 4
+          screencapture -x sinov/3-option-b-bufer.png || true
+          if kill -0 "$PID" 2>/dev/null; then echo "TIRIK: tugmalardan keyin ham ishlayapti" | tee -a sinov/natija.txt; else echo "QULADI: tugmalardan keyin yopildi" | tee -a sinov/natija.txt; fi
+          kill "$PID" 2>/dev/null || true
+          sleep 2
+          cp ~/Library/Application\ Support/Gapla/logs/*.log sinov/ 2>/dev/null || true
+          grep -hiE "hotkey (not )?registered|Gapla (tarjima|bufer)|uncaught|fatal|crash" sinov/*.log | cut -c1-240 | sort -u | head -60 | tee sinov/muhim-qatorlar.txt || true
+
+      - name: Sinov suratlari va jurnal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gapla-mac-sinov-${{ matrix.arch }}
+          path: kompyuter/sinov/
+          retention-days: 7
+          if-no-files-found: ignore
