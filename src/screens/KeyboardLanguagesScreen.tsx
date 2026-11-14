@@ -31,7 +31,13 @@ export default function KeyboardLanguagesScreen() {
               icon="keyboard"
               mdIcon="Keyboard"
               title={language.name}
-              description={alwaysOn ? 'Doim yoqilgan' : undefined}
+              description={
+                alwaysOn
+                  ? 'Doim yoqilgan'
+                  : language.id === 'rq'
+                    ? "Harflar lotin klaviaturasidagi o'rnida"
+                    : undefined
+              }
               rightElement={
                 <SettingsSwitch
                   value={alwaysOn || enabled.includes(language.id)}

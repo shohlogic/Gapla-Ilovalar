@@ -1,13 +1,13 @@
-// Gapla (G58): the keyboard's languages — O'zbekcha, Русский, English, Türkçe. The app saves which
-// are on in the App Group key below as "uz,ru,en,tr"; the keyboard reads it each time it comes up
+// Gapla (G58): the keyboard's languages — O'zbekcha, Русский, Русский QWERTY (G60), English, Türkçe. The app
+// saves which are on in the App Group key below as "uz,ru,rq,en,tr"; the keyboard reads it each time it comes up
 // (KeyboardViewController.swift: KeyboardLanguage, KeyboardHandoffProvider.keyboardLanguages).
-// Not saved yet: all four, the default. O'zbekcha is always on. The order is the order the
+// Not saved yet: all of them, the default. O'zbekcha is always on. The order is the order the
 // keyboard's language key steps through them.
 import { useCallback, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import { AppGroupStorage } from '../../modules/app-group-storage/src';
 
-export type KeyboardLanguageId = 'uz' | 'ru' | 'en' | 'tr';
+export type KeyboardLanguageId = 'uz' | 'ru' | 'rq' | 'en' | 'tr';
 
 /** `label` is the keyboard's language key, `name` the language's own name (on the space bar too). */
 type KeyboardLanguage = { id: KeyboardLanguageId; label: string; name: string };
@@ -15,6 +15,8 @@ type KeyboardLanguage = { id: KeyboardLanguageId; label: string; name: string };
 export const KEYBOARD_LANGUAGES: ReadonlyArray<KeyboardLanguage> = [
   { id: 'uz', label: 'UZ', name: "O'zbekcha" },
   { id: 'ru', label: 'RU', name: 'Русский' },
+  // G60: the owner's own Russian on the QWERTY positions; Apple's ЙЦУКЕН above stays.
+  { id: 'rq', label: 'RQ', name: 'Русский QWERTY' },
   { id: 'en', label: 'EN', name: 'English' },
   { id: 'tr', label: 'TR', name: 'Türkçe' },
 ];

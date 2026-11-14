@@ -851,17 +851,94 @@ private struct DictationLinkView: View {
   }
 }
 
+/// Gapla (G60): the letters a held key offers, in a row above it, as Apple's accent picker. The finger slides along the
+/// row to choose; lifting types the chosen one (KeyboardViewController.handleAlternateLongPress). The first is picked
+/// until the finger moves, so a key with one alternate types it on a plain hold.
+private final class AlternatesPopupView: UIView {
+  private static let cellWidth: CGFloat = 42
+  private static let height: CGFloat = 50
+  private static let rise: CGFloat = 8
+
+  private let stack = UIStackView()
+  private var labels: [UILabel] = []
+  private(set) var selectedIndex = 0
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isUserInteractionEnabled = false
+    isHidden = true
+    backgroundColor = Palette.popupBackground
+    layer.cornerRadius = 10
+    layer.shadowColor = UIColor.black.cgColor
+    layer.shadowOpacity = 0.25
+    layer.shadowRadius = 4
+    layer.shadowOffset = CGSize(width: 0, height: 1)
+    stack.axis = .horizontal
+    stack.distribution = .fillEqually
+    addSubview(stack)
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  /// Shows `choices` above `keyFrame` (both in the superview's coordinates), kept inside `container`.
+  func show(_ choices: [String], font: UIFont, keyFrame: CGRect, container: CGRect) {
+    labels.forEach { $0.removeFromSuperview() }
+    labels = choices.map { choice in
+      let label = UILabel()
+      label.text = choice
+      label.font = font
+      label.textAlignment = .center
+      label.layer.cornerRadius = 8
+      label.layer.masksToBounds = true
+      stack.addArrangedSubview(label)
+      return label
+    }
+    let width = max(keyFrame.width, CGFloat(choices.count) * Self.cellWidth)
+    let x = min(max(keyFrame.midX - width / 2, container.minX), container.maxX - width)
+    let y = max(keyFrame.minY - Self.height - Self.rise, 0)
+    frame = CGRect(x: x, y: y, width: width, height: Self.height)
+    stack.frame = bounds.insetBy(dx: 4, dy: 4)
+    select(0)
+    isHidden = false
+    superview?.bringSubviewToFront(self)
+  }
+
+  func select(_ index: Int) {
+    selectedIndex = index
+    for (position, label) in labels.enumerated() {
+      let picked = position == index
+      label.backgroundColor = picked ? Palette.returnKeyProminent : .clear
+      label.textColor = picked ? .white : Palette.keyText
+    }
+  }
+
+  /// The choice under `x`, in this view's coordinates, held to the row's ends.
+  func index(atX x: CGFloat) -> Int {
+    guard !labels.isEmpty, bounds.width > 0 else { return 0 }
+    let position = Int((x / bounds.width) * CGFloat(labels.count))
+    return min(max(position, 0), labels.count - 1)
+  }
+
+  func hide() {
+    isHidden = true
+  }
+}
+
 /// Gapla (G58, owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md]): the keyboard's languages, in the order
 /// the language key steps through them. Uzbek is always on; the app turns the others off (src/lib/keyboardLanguages.ts,
 /// read by KeyboardHandoffProvider.keyboardLanguages). The letter rows are KeyboardViewController.letterRows.
 private enum KeyboardLanguage: String, CaseIterable {
-  case uz, ru, en, tr
+  // G60: rq is the owner's own Russian on the QWERTY positions, after Apple's ЙЦУКЕН.
+  case uz, ru, rq, en, tr
 
   /// The language key's label: text, so it never looks like the system's globe key on Home-button phones.
   var keyLabel: String {
     switch self {
     case .uz: return "UZ"
     case .ru: return "RU"
+    case .rq: return "RQ"
     case .en: return "EN"
     case .tr: return "TR"
     }
@@ -872,6 +949,7 @@ private enum KeyboardLanguage: String, CaseIterable {
     switch self {
     case .uz: return "O'zbekcha"
     case .ru: return "Русский"
+    case .rq: return "Русский QWERTY"
     case .en: return "English"
     case .tr: return "Türkçe"
     }
@@ -882,21 +960,30 @@ private enum KeyboardLanguage: String, CaseIterable {
   var primaryLanguage: String {
     switch self {
     case .uz: return "mul"
-    case .ru: return "ru-RU"
+    case .ru, .rq: return "ru-RU"
     case .en: return "en-US"
     case .tr: return "tr-TR"
     }
   }
 
-  /// The letter a held key types instead, as on Apple's keyboard: ё on е and ъ on ь in Russian.
-  func alternate(for letter: String) -> String? {
-    guard self == .ru else { return nil }
-    switch letter {
-    case "е": return "ё"
-    case "ь": return "ъ"
-    default: return nil
+  /// The letters a held key offers, first one picked unless the finger slides to another (handleAlternateLongPress):
+  /// Apple's ё on е and ъ on ь in Russian; G60's Russian QWERTY, owner's approved sketch 2026-11-14 ([so'zlari:
+  /// bilim/gapla-goyalar-royxati.md]): е → ё э, ь → ъ, й → ю я ё, и → ы, г → ғ, у → ў.
+  func alternates(for letter: String) -> [String] {
+    switch (self, letter) {
+    case (.ru, "е"): return ["ё"]
+    case (.ru, "ь"), (.rq, "ь"): return ["ъ"]
+    case (.rq, "е"): return ["ё", "э"]
+    case (.rq, "й"): return ["ю", "я", "ё"]
+    case (.rq, "и"): return ["ы"]
+    case (.rq, "г"): return ["ғ"]
+    case (.rq, "у"): return ["ў"]
+    default: return []
     }
   }
+
+  /// G59/G60: the comma sits right of the space bar instead of in the letter rows, and the iPad's row 2 is indented.
+  var commaBesideSpace: Bool { self == .uz || self == .rq }
 
   /// A letter in capitals: Turkish has its own (i → İ, ı → I); the others take the usual ones.
   func uppercased(_ letter: String) -> String {
@@ -1263,6 +1350,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private let symbolsRowsStack = UIStackView()
   private let emojiRowsStack = UIStackView()
   private var emojiButton: KeyButton?
+  /// G59: Uzbek's comma, right of the space bar (makeCommaKey, refreshCommaKey).
+  private var commaButton: KeyButton?
   // Gapla (G8): the toolbar's clipboard button and its page, built the first time it opens.
   private let clipboardRowsStack = UIStackView()
   private let clipboardButton = KeyButton(type: .system)
@@ -1275,6 +1364,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// The last word counted, so the next one counts with it as a pair.
   private var tavsiyaLastCounted: String?
   private let keyPopup = KeyPopupView()
+  /// G60: the held key's letters to choose from (handleAlternateLongPress).
+  private let alternatesPopup = AlternatesPopupView()
+  private var alternateChoices: [String] = []
   // One Uzbek letter key's width, (row width − 10 gaps) / 11 (guideKeysPerRow), in every language. Every key width is
   // a multiple of it, so the layout follows the screen width without any width constants.
   private let keyWidthGuide = UILayoutGuide()
@@ -1702,24 +1794,37 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     keyPopup.hide(owner: sender, after: 0.05)
   }
 
-  /// Gapla (G58): holding a letter that has an Apple alternate types the alternate instead (Russian е → ё, ь → ъ);
-  /// the held press cancels the letter, as the held comma's full stop does (G39). The preview shows the alternate.
+  /// Gapla (G58, G60): holding a letter with alternates (Russian е → ё; Russian QWERTY й → ю я ё …) shows them above
+  /// the key; the finger slides to one and lifting types it. The held press cancels the letter, as the held comma's
+  /// full stop does (G39). Lifting without moving types the first, so a one-alternate key works on a plain hold.
   @objc private func handleAlternateLongPress(_ gesture: UILongPressGestureRecognizer) {
     guard let key = gesture.view as? KeyButton else { return }
     switch gesture.state {
     case .began:
-      guard let output = key.output, let alternate = keyboardLanguage.alternate(for: output) else { return }
+      guard let output = key.output else { return }
+      let shifted = layoutMode == .letters && isShiftEnabled
+      let choices = keyboardLanguage.alternates(for: output).map { shifted ? keyboardLanguage.uppercased($0) : $0 }
+      guard !choices.isEmpty else { return }
       playKeyClick()
-      let text = layoutMode == .letters && isShiftEnabled ? keyboardLanguage.uppercased(alternate) : alternate
       alternateHeldKey = key
-      keyPopup.show(
-        text,
+      alternateChoices = choices
+      keyPopup.hide(owner: key)
+      alternatesPopup.show(
+        choices,
         font: key.titleLabel?.font ?? metrics.keycaps.uppercase,
         keyFrame: key.convert(key.bounds, to: rootStack),
-        keyCornerRadius: metrics.keyCornerRadius,
-        container: rootStack.layoutMarginsGuide.layoutFrame,
-        owner: key
+        container: rootStack.layoutMarginsGuide.layoutFrame
       )
+    case .changed:
+      guard alternateHeldKey === key else { return }
+      alternatesPopup.select(alternatesPopup.index(atX: gesture.location(in: alternatesPopup).x))
+    case .ended:
+      guard alternateHeldKey === key else { return }
+      let choices = alternateChoices
+      let index = alternatesPopup.selectedIndex
+      endAlternatePick()
+      guard choices.indices.contains(index) else { return }
+      let text = choices[index]
       if tavsiyaOn { tavsiyaTypedWord += text }
       typeText(text)
       // Shift ends after the letter, as after a tapped one.
@@ -1731,13 +1836,18 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
         }
       }
       refreshAfterEdit()
-    case .ended, .cancelled, .failed:
+    case .cancelled, .failed:
       guard alternateHeldKey === key else { return }
-      alternateHeldKey = nil
-      keyPopup.hide(owner: key, after: 0.05)
+      endAlternatePick()
     default:
       break
     }
+  }
+
+  private func endAlternatePick() {
+    alternateHeldKey = nil
+    alternateChoices = []
+    alternatesPopup.hide()
   }
 
   @objc private func handleShiftTapped() {
@@ -3127,6 +3237,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     // Above the bar and the keys, and inside rootStack so it fades and locks with them
     // whenever a canvas covers the keyboard.
     rootStack.addSubview(keyPopup)
+    rootStack.addSubview(alternatesPopup)
   }
 
   private func buildKeyboardIfNeeded() {
@@ -3140,14 +3251,15 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   // Gapla (G38, owner 2026-11-11): one Uzbek Latin layout after the Turkish keyboard, without
   // the o' and g' keys — [so'zlari: bilim/gapla-goyalar-royxati.md]. As on the Turkish
-  // keyboard: ğ after p, ş after l, ö ç after m. Row 2 ends with a comma, in the Turkish ı/i
-  // slot, so row 3 keeps nine letters and full-width shift and delete keys; holding the comma
-  // types a full stop (G39, [so'zlari: bilim/gapla-goyalar-royxati.md]). The apostrophe (ma'no, san'at) is on the 123 page, row 3. The
-  // Gapla Android keyboard gets the same order. The app's old «Klaviatura alifbosi» switch is
-  // gone; a value it saved earlier changes nothing here.
+  // keyboard: ğ after p, ş after l, ö ç after m. G59 (owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md]):
+  // row 2 holds ten letters, so it sits half a key in from each edge, staggered under row 1 as on a real keyboard; the
+  // comma left it for the bottom row, right of the space bar (makeCommaKey), where holding it still types a full stop
+  // (G39). Row 3 keeps nine letters and full-width shift and delete keys. The apostrophe (ma'no, san'at) is on the 123
+  // page, row 3. The Gapla Android keyboard gets the same order. The app's old «Klaviatura alifbosi» switch is gone; a
+  // value it saved earlier changes nothing here.
   private static let letterRowsGapla: [[String]] = [
     ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "ğ"],
-    ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ş", ","],
+    ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ş"],
     ["z", "x", "c", "v", "b", "n", "m", "ö", "ç"],
   ]
   // Gapla (G58, owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md]): the other languages copy Apple's iPhone
@@ -3168,6 +3280,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ş", "i"],
     ["z", "x", "c", "v", "b", "n", "m", "ö", "ç"],
   ]
+  // Gapla (G60, owner 2026-11-14, approved sketch «taklif-3»: [so'zlari: bilim/gapla-goyalar-royxati.md]): the owner's
+  // Russian on his laptop's QWERTY positions, laid out as G59's Uzbek — eleven keys, ten half a key in, nine between
+  // shift and delete — with the comma right of the space bar. Rarer letters are held (KeyboardLanguage.alternates).
+  private static let letterRowsRussianQwerty: [[String]] = [
+    ["қ", "щ", "е", "р", "т", "й", "у", "и", "о", "п", "я"],
+    ["а", "с", "д", "ф", "г", "ҳ", "ж", "к", "л", "ш"],
+    ["з", "х", "ц", "в", "б", "н", "м", "ь", "ч"],
+  ]
 
   /// keyWidthGuide is one of this many keys across the row in every language. Every width outside the letter rows
   /// (the 123 and #+= pages, the bottom row, the emoji page, the iPad's bottom row) is measured in it, so those keep
@@ -3179,6 +3299,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     switch keyboardLanguage {
     case .uz: return Self.letterRowsGapla
     case .ru: return Self.letterRowsRussian
+    case .rq: return Self.letterRowsRussianQwerty
     case .en: return Self.letterRowsEnglish
     case .tr: return Self.letterRowsTurkish
     }
@@ -3236,8 +3357,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     keyboardRowsStack.addArrangedSubview(emojiRowsStack)
     keyboardRowsStack.addArrangedSubview(clipboardRowsStack)
     emojiButton = nil
+    commaButton = nil
     clipboardPanel = nil
     alternateHeldKey = nil
+    alternateChoices = []
+    alternatesPopup.hide()
 
     let letters = letterRows.map { row in row.map { (display: $0, output: $0) } }
     if builtForTablet {
@@ -3732,6 +3856,16 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func refreshFieldAwareKeys() {
     refreshReturnKey()
     refreshBottomRow()
+    refreshCommaKey()
+  }
+
+  /// G59: the bottom row's comma shows on the Uzbek letters page of an ordinary field only. The 123 and #+= pages have
+  /// their own comma, and URL, e-mail, search and Twitter fields keep Apple's keys there (BottomRowLayout.shortcuts).
+  private func refreshCommaKey() {
+    guard let commaButton else { return }
+    let layout = BottomRowLayout.forKeyboardType(textDocumentProxy.keyboardType, letters: layoutMode == .letters)
+    let shows = keyboardLanguage.commaBesideSpace && layoutMode == .letters && layout.shortcuts.isEmpty && layout.showsSpace
+    if commaButton.isHidden == shows { commaButton.isHidden = !shows }
   }
 
   private var isReturnKeyDisabled: Bool {
@@ -3890,7 +4024,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
         }
       default:
         // Gapla (G58): letters with an Apple alternate type it when held (Russian е → ё, ь → ъ).
-        if registersLetters, keyboardLanguage.alternate(for: key.output) != nil {
+        if registersLetters, !keyboardLanguage.alternates(for: key.output).isEmpty {
           let alternatePress = UILongPressGestureRecognizer(
             target: self,
             action: #selector(handleAlternateLongPress(_:))
@@ -4026,10 +4160,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // Owner, 2026-11-12, with photos of Gapla and of Apple's own keyboard on his iPad: [so'zlari: bilim/gapla-goyalar-royxati.md]. Apple's
   // iPad keyboard: row 1 ends with delete, row 2 with return, row 3 has a shift at each end, and
   // the bottom row is .?123 · globe · space · .?123 · hide keyboard. The Uzbek letters sit where
-  // Apple's Turkish-Q iPad keyboard has them, as on the phone: ğ after p, ş after l, ö ç after m;
-  // the comma takes the Turkish i's place after ş (G39), and the full stop follows ç.
-  // Letter keys are equal in every row: 11 letters + delete (1.5) = 11 + return (1.5) =
-  // shift (1.25) + 10 keys + shift (1.25) = 12.5 letter widths.
+  // Apple's Turkish-Q iPad keyboard has them, as on the phone: ğ after p, ş after l, ö ç after m.
+  // G59: the comma (held: full stop) sits right of the space bar, and row 2 is indented — see
+  // addTabletLetterRows. Letter keys are equal in every row (12.5 letter widths).
   private static let tabletDeleteKeys: CGFloat = 1.5
   private static let tabletReturnKeys: CGFloat = 1.5
   private static let tabletShiftKeys: CGFloat = 1.25
@@ -4043,14 +4176,22 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     // the full stop after its last letter. The three rows span as many letter widths as the widest needs at the sizes
     // above, and the function keys take what each row's letters leave, so letter keys stay equal across rows. Uzbek
     // and Russian keep 1.5 · 1.5 · 1.25 (12.5); English gets 1.5 · 2.5 · 1.75 (11.5), Turkish 1.5 · 2.5 · 1.75 (13.5).
-    let thirdRow = letters[2] + [(display: ".", output: ".")]
+    // G59 (owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md]): Uzbek's comma and full stop left the letter
+    // rows for the bottom row's comma key (held: full stop), and row 2 starts half a key in, staggered under row 1 as
+    // on Apple's Turkish iPad keyboard: 11 + delete (1.5) = half-key indent + 10 + return (2) = shift (1.75) + 9 +
+    // shift (1.75) = 12.5 letter widths.
+    let staggered = keyboardLanguage.commaBesideSpace  // G59 Uzbek, G60 Russian QWERTY
+    let thirdRow = staggered ? letters[2] : letters[2] + [(display: ".", output: ".")]
+    let secondRowIndent: CGFloat = staggered ? 0.5 : 0
+    let secondRowLeading: [(key: KeyButton, keys: CGFloat)] =
+      staggered ? [(key: makeRowIndent(), keys: secondRowIndent)] : []
     let rowKeys = max(
       CGFloat(letters[0].count) + Self.tabletDeleteKeys,
-      CGFloat(letters[1].count) + Self.tabletReturnKeys,
+      secondRowIndent + CGFloat(letters[1].count) + Self.tabletReturnKeys,
       CGFloat(thirdRow.count) + 2 * Self.tabletShiftKeys
     )
     let deleteKeys = rowKeys - CGFloat(letters[0].count)
-    let returnKeys = rowKeys - CGFloat(letters[1].count)
+    let returnKeys = rowKeys - secondRowIndent - CGFloat(letters[1].count)
     let shiftKeys = (rowKeys - CGFloat(thirdRow.count)) / 2
 
     addTabletRow(
@@ -4061,6 +4202,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let returnKey = makeReturnKey()
     returnButton = returnKey
     addTabletRow(
+      leading: secondRowLeading,
       keys: makeKeyStack(letters[1], registersLetters: true),
       trailing: [(returnKey, returnKeys)],
       to: stack
@@ -4104,6 +4246,17 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       trailing: [(makePageKey(title: pageKeyTitle), Self.tabletReturnKeys)],
       to: stack
     )
+  }
+
+  /// G59: an empty slot that indents an iPad row. Invisible and untouchable, so KeyboardRowsStack gives its taps to
+  /// the nearest key, as it does for the phone's centred rows.
+  private func makeRowIndent() -> KeyButton {
+    let indent = KeyButton(type: .custom)
+    indent.translatesAutoresizingMaskIntoConstraints = false
+    indent.alpha = 0
+    indent.isUserInteractionEnabled = false
+    indent.isAccessibilityElement = false
+    return indent
   }
 
   /// One iPad row across the full width: function keys sized in widths of the row's own keys,
@@ -4160,6 +4313,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let languageButton = makeLanguageKey()
     let spaceButton = makeSpaceKey()
     self.spaceButton = spaceButton
+    // G59: Uzbek's comma, right of the space bar, as on the phone.
+    let commaButton = makeCommaKey()
     let shortcuts = makeShortcutKeys()
     shortcutButtons = shortcuts
 
@@ -4167,7 +4322,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     hideKey.accessibilityLabel = "Klaviaturani yopish"
     hideKey.addTarget(self, action: #selector(handleHideKeyboardTapped), for: .touchUpInside)
 
-    ([leftMode, globeButton, emojiButton, languageButton, spaceButton] + shortcuts + [rightMode, hideKey])
+    ([leftMode, globeButton, emojiButton, languageButton, spaceButton, commaButton] + shortcuts + [rightMode, hideKey])
       .forEach(row.addArrangedSubview)
 
     let hideable = UILayoutPriority.required - 1
@@ -4189,6 +4344,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       widthOfKeys(globeButton, keys: Self.tabletBottomGlobeKeys, priority: hideable),
       widthOfKeys(emojiButton, keys: Self.tabletBottomGlobeKeys, priority: hideable),
       widthOfKeys(languageButton, keys: Self.tabletBottomGlobeKeys, priority: hideable),
+      widthOfKeys(commaButton, keys: Self.tabletBottomGlobeKeys, priority: hideable),
     ])
   }
 
@@ -4213,6 +4369,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     spaceButton.setTitle(keyboardLanguage.name, for: .normal)
     spaceButton.titleLabel?.font = KeyFont.pageLabel
     spaceButton.titleBaselineFromCenter = metrics.keycaps.label123.baseline
+    // G60: «Русский QWERTY» is longer than the space bar left beside the language and comma keys; it shrinks to fit.
+    spaceButton.titleLabel?.adjustsFontSizeToFitWidth = true
+    spaceButton.titleLabel?.minimumScaleFactor = 0.6
     spaceButton.accessibilityLabel = "bo'sh joy"
     spaceButton.accessibilityValue = keyboardLanguage.name
     let spaceCursorPress = UILongPressGestureRecognizer(
@@ -4223,6 +4382,27 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     spaceCursorPress.allowableMovement = .greatestFiniteMagnitude
     spaceButton.addGestureRecognizer(spaceCursorPress)
     return spaceButton
+  }
+
+  /// Gapla (G59, owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md]): Uzbek's comma, right of the space bar
+  /// and left of return, as on the Gapla Android keyboard. A tap types a comma, a held press a full stop (G39), as the
+  /// letters-page comma did. refreshCommaKey shows it on the Uzbek letters page of ordinary fields only.
+  private func makeCommaKey() -> KeyButton {
+    let button = makeKeyButton(display: ",", output: ",", role: .character)
+    button.accessibilityLabel = "vergul"
+    button.isHidden = true
+    let commaPress = UILongPressGestureRecognizer(target: self, action: #selector(handleCommaLongPress(_:)))
+    commaPress.minimumPressDuration = 0.4
+    button.addGestureRecognizer(commaPress)
+    button.addTarget(self, action: #selector(handleCharacterKeyTapped(_:)), for: .touchUpInside)
+    button.addTarget(self, action: #selector(handleCharacterKeyDown(_:)), for: .touchDown)
+    button.addTarget(
+      self,
+      action: #selector(handleCharacterKeyReleased(_:)),
+      for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit]
+    )
+    commaButton = button
+    return button
   }
 
   /// The three field keys refreshBottomRow fills (URL ". / .com", email "@ .", …).
@@ -4264,13 +4444,16 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let spaceButton = makeSpaceKey()
     self.spaceButton = spaceButton
 
+    // G59: Uzbek's comma, right of the space bar, which gives up its width.
+    let commaButton = makeCommaKey()
+
     let shortcuts = makeShortcutKeys()
     shortcutButtons = shortcuts
 
     let returnButton = makeReturnKey()
     self.returnButton = returnButton
 
-    ([modeButton, globeButton, emojiButton, languageButton, spaceButton] + shortcuts + [returnButton])
+    ([modeButton, globeButton, emojiButton, languageButton, spaceButton, commaButton] + shortcuts + [returnButton])
       .forEach(row.addArrangedSubview)
 
     // Keys that can hide in the stack get 999 widths, so the stack's own zero-width
@@ -4297,12 +4480,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       )
     )
     // 123 always shares its width now: with the globe on home-button phones, with the emoji
-    // key elsewhere (G45). G58: the language key is as wide as each half.
+    // key elsewhere (G45). G58: the language key is as wide as each half. G59: so is the comma.
     NSLayoutConstraint.activate([
       halfBottomKey(modeButton),
       halfBottomKey(globeButton),
       halfBottomKey(emojiButton),
       halfBottomKey(languageButton),
+      halfBottomKey(commaButton),
     ])
   }
 
