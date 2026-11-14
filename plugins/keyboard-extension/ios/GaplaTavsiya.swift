@@ -323,6 +323,13 @@ final class GaplaTavsiya {
     if sendIsDue || !forgets.isEmpty { sendPending() }
   }
 
+  /// Gapla (G58): the keyboard is going away in a language other than Uzbek: what waits is saved, nothing is sent; it
+  /// goes the next time the keyboard is up in Uzbek.
+  func save() {
+    guard accessGroup != nil else { return }
+    saveQueue()
+  }
+
   /// One finished word typed on the keys or picked from the row, with the word before it when that belongs to the
   /// same run. The caller has already ruled out fields that must not be learned from.
   func countTyped(_ word: String, previous: String?, sentenceStart: Bool) {

@@ -9,6 +9,7 @@ import { useConfigStore } from '@/store/useConfigStore';
 import { useConfigToggle } from '@/hooks/useConfigToggle';
 import { DEFAULT_LANGUAGE, getLanguage } from '@/lib/languages';
 import { toneLabel, DEFAULT_KEYBOARD_TONE } from '@/lib/keyboardTone';
+import { keyboardLanguageLabels, useKeyboardLanguages } from '@/lib/keyboardLanguages';
 import { LiveActivity } from '../../modules/live-activity/src';
 import { AppGroupStorage, APP_GROUP_KEYS } from '../../modules/app-group-storage/src';
 
@@ -17,6 +18,8 @@ export default function PreferencesScreen() {
   const autoLearn = config?.autoLearnCorrections ?? true;
   const language = getLanguage(config?.preferredLanguage ?? DEFAULT_LANGUAGE);
   const keyboardTone = config?.keyboardTone ?? DEFAULT_KEYBOARD_TONE;
+  // Gapla (G58): the Gapla keyboard's languages.
+  const [keyboardLanguages] = useKeyboardLanguages();
   const handleToggleAutoLearn = useConfigToggle('autoLearnCorrections');
   const [dictationMode, setDictationMode] = useState(() => LiveActivity.isDictationModeEnabled());
   // Gapla (G47): the orb's test voice, to put the phone next to the sample page.
@@ -66,6 +69,15 @@ export default function PreferencesScreen() {
           title="To'liq kirish"
           description="Klaviaturada diktovka uchun kerak. Sozlash qadamlarini ko'rish uchun bosing."
           onPress={() => router.push('/keyboard-full-access')}
+        />
+        <SettingsRow
+          iconStyle="line"
+          icon="character.bubble"
+          mdIcon="Languages"
+          title="Klaviatura tillari"
+          description="Til tugmasi shu tillar orasida almashtiradi"
+          subtitle={keyboardLanguageLabels(keyboardLanguages)}
+          onPress={() => router.push('/(account)/keyboard-languages')}
         />
         <SettingsRow
           iconStyle="line"

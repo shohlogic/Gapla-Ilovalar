@@ -182,3 +182,7 @@ src/store/useAuthStore.ts:failed  # kirish va hisob o'chirish xatosi; kirish ekr
 src/services/transcription/parakeetModelDownloader.ts:*  # yuklash boshidayoq rad etiladi (HUGGINGFACE_BASE_URL bo'sh); rad xabari o'zbekcha
 src/services/transcription/RealtimeMeetingWsService.ts:Realtime session ended  # bulut uchrashuvi faqat haqiqiy hisob bilan
 src/services/transcription/TranscriptionService.ts:Transcription error:  # OpenWhispr bulut xatosi o'rami; Gapla bulutga yubormaydi
+
+# --- Klaviatura tillari (G58): til o'z nomi bilan yoziladi ---
+plugins/keyboard-extension/ios/KeyboardViewController.swift:English  # inglizcha klaviatura nomi o'z tilida (bo'sh joy tugmasi, til ro'yxati), ruscha «Русский», turkcha «Türkçe» kabi (G58)
+src/lib/keyboardLanguages.ts:English  # inglizcha klaviatura nomi o'z tilida (Klaviatura tillari sahifasi), ruscha «Русский», turkcha «Türkçe» kabi (G58)

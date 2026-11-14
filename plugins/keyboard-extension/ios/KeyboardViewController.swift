@@ -851,6 +851,61 @@ private struct DictationLinkView: View {
   }
 }
 
+/// Gapla (G58, owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md]): the keyboard's languages, in the order
+/// the language key steps through them. Uzbek is always on; the app turns the others off (src/lib/keyboardLanguages.ts,
+/// read by KeyboardHandoffProvider.keyboardLanguages). The letter rows are KeyboardViewController.letterRows.
+private enum KeyboardLanguage: String, CaseIterable {
+  case uz, ru, en, tr
+
+  /// The language key's label: text, so it never looks like the system's globe key on Home-button phones.
+  var keyLabel: String {
+    switch self {
+    case .uz: return "UZ"
+    case .ru: return "RU"
+    case .en: return "EN"
+    case .tr: return "TR"
+    }
+  }
+
+  /// The language's own name: on the space bar and in the language key's list.
+  var name: String {
+    switch self {
+    case .uz: return "O'zbekcha"
+    case .ru: return "Русский"
+    case .en: return "English"
+    case .tr: return "Türkçe"
+    }
+  }
+
+  /// The language the keyboard reports to iOS and the host app (UIInputViewController.primaryLanguage). Uzbek keeps
+  /// Info.plist's "mul", as before G58, so host apps treat Uzbek typing exactly as they did.
+  var primaryLanguage: String {
+    switch self {
+    case .uz: return "mul"
+    case .ru: return "ru-RU"
+    case .en: return "en-US"
+    case .tr: return "tr-TR"
+    }
+  }
+
+  /// The letter a held key types instead, as on Apple's keyboard: ё on е and ъ on ь in Russian.
+  func alternate(for letter: String) -> String? {
+    guard self == .ru else { return nil }
+    switch letter {
+    case "е": return "ё"
+    case "ь": return "ъ"
+    default: return nil
+    }
+  }
+
+  /// A letter in capitals: Turkish has its own (i → İ, ı → I); the others take the usual ones.
+  func uppercased(_ letter: String) -> String {
+    self == .tr ? letter.uppercased(with: Self.turkishLocale) : letter.uppercased()
+  }
+
+  private static let turkishLocale = Locale(identifier: "tr_TR")
+}
+
 final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDelegate {
   private static func infoString(_ key: String) -> String? {
     guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else { return nil }
@@ -1220,8 +1275,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// The last word counted, so the next one counts with it as a pair.
   private var tavsiyaLastCounted: String?
   private let keyPopup = KeyPopupView()
-  // One letter key's width, (row width − 9 gaps) / 10. Every key width is a multiple of
-  // it, so the layout follows the screen width without any width constants.
+  // One Uzbek letter key's width, (row width − 10 gaps) / 11 (guideKeysPerRow), in every language. Every key width is
+  // a multiple of it, so the layout follows the screen width without any width constants.
   private let keyWidthGuide = UILayoutGuide()
   private var keyWidthGuideConstraint: NSLayoutConstraint?
 
@@ -1295,6 +1350,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var didRequestCancelForCurrentSession = false
 
   private var layoutMode: KeyboardLayoutMode = .letters
+  /// Gapla (G58): the language the letters are in, and the languages the app has on (Uzbek always), in key order.
+  private var keyboardLanguage: KeyboardLanguage = .uz
+  private var enabledLanguages: [KeyboardLanguage] = KeyboardLanguage.allCases
+  /// The letter key held for its alternate (handleAlternateLongPress): its preview stays up until the finger lifts.
+  private weak var alternateHeldKey: KeyButton?
   /// Something was typed on the 123/#+= pages since leaving letters; space then returns to
   /// letters, as on Apple's keyboard (a bare space keeps the page).
   private var typedOnSymbolPage = false
@@ -1433,6 +1493,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     // G54: anything drawn in the default tint (system blue) takes the Gapla accent instead.
     view.tintColor = Palette.accentTint
     GaplaTavsiya.shared.onChange = { [weak self] in self?.refreshTavsiya() }
+    // G58: the keys are built in the language last used.
+    loadKeyboardLanguages()
     setupLayout()
     applyKeyboardHeight()
     refreshRecordButton()
@@ -1480,6 +1542,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // textDidChange when the keyboard opens: shift and the return key follow the field here.
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
+    // G58: languages turned on or off in the app since the keyboard was last up.
+    if loadKeyboardLanguages() { applyKeyboardLanguageChange() }
     noteFieldReport()
     syncShiftWithContextIfNeeded()
     refreshFieldAwareKeys()
@@ -1500,8 +1564,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     }
     KeyboardHandoffProvider.shared.markShown()
     KeyboardHandoffProvider.shared.storeHostReturnInfo(from: self)
-    // Gapla (G41): the saved word list, fetched again from the server when it is due.
-    GaplaTavsiya.shared.start(accessGroup: "group.\(Self.resolvedContainingAppBundleID)")
+    // Gapla (G41): the saved word list, fetched again from the server when it is due (G58: in Uzbek only).
+    startTavsiyaIfOn()
     refreshTavsiya()
     refreshToneButton()
     refreshAgentButton()
@@ -1536,8 +1600,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     resetRecordingOrbImmediately()
     // Gapla (G8): the clipboard list is never left open to go stale; it reloads when reopened.
     if layoutMode == .clipboard { returnToLetters() }
-    // Gapla (G41): what was counted is saved (and sent when due); the next opening starts a new run.
-    GaplaTavsiya.shared.flush()
+    // Gapla (G41): what was counted is saved (and sent when due); the next opening starts a new run. G58: in another
+    // language it is only saved; it goes the next time the keyboard is in Uzbek.
+    if tavsiyaOn {
+      GaplaTavsiya.shared.flush()
+    } else {
+      GaplaTavsiya.shared.save()
+    }
     tavsiyaTypedWord = ""
     tavsiyaLastCounted = nil
     stopDeleteRepeating()
@@ -1572,14 +1641,15 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     guard let output = sender.output else { return }
     playKeyClick()
 
-    let insertion = layoutMode == .letters && isShiftEnabled ? output.uppercased() : output
+    // G58: capitals in the keyboard's language (Turkish i → İ).
+    let insertion = layoutMode == .letters && isShiftEnabled ? keyboardLanguage.uppercased(output) : output
     // Gapla: the apostrophe is part of Uzbek words (ma'no, san'at), so it stays straight, as
     // the Gapla bridge writes it. Since G39 it sits on the 123 page only.
     let text = layoutMode == .letters || output == "'"
       ? insertion
       : (smartQuoteSubstitution(for: insertion) ?? insertion)
-    // Gapla (G41): letters and the apostrophe build the word being typed; any other key ends it.
-    if text.count == 1, let character = text.first, GaplaTavsiya.isWordCharacter(character) {
+    // Gapla (G41): letters and the apostrophe build the word being typed; any other key ends it. G58: Uzbek only.
+    if tavsiyaOn, text.count == 1, let character = text.first, GaplaTavsiya.isWordCharacter(character) {
       tavsiyaTypedWord += text
     } else {
       countTypedWordIfFinished()
@@ -1627,7 +1697,47 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   @objc private func handleCharacterKeyReleased(_ sender: KeyButton) {
+    // G58: a key held for its alternate keeps the alternate's preview until the finger lifts.
+    guard sender !== alternateHeldKey else { return }
     keyPopup.hide(owner: sender, after: 0.05)
+  }
+
+  /// Gapla (G58): holding a letter that has an Apple alternate types the alternate instead (Russian е → ё, ь → ъ);
+  /// the held press cancels the letter, as the held comma's full stop does (G39). The preview shows the alternate.
+  @objc private func handleAlternateLongPress(_ gesture: UILongPressGestureRecognizer) {
+    guard let key = gesture.view as? KeyButton else { return }
+    switch gesture.state {
+    case .began:
+      guard let output = key.output, let alternate = keyboardLanguage.alternate(for: output) else { return }
+      playKeyClick()
+      let text = layoutMode == .letters && isShiftEnabled ? keyboardLanguage.uppercased(alternate) : alternate
+      alternateHeldKey = key
+      keyPopup.show(
+        text,
+        font: key.titleLabel?.font ?? metrics.keycaps.uppercase,
+        keyFrame: key.convert(key.bounds, to: rootStack),
+        keyCornerRadius: metrics.keyCornerRadius,
+        container: rootStack.layoutMarginsGuide.layoutFrame,
+        owner: key
+      )
+      if tavsiyaOn { tavsiyaTypedWord += text }
+      typeText(text)
+      // Shift ends after the letter, as after a tapped one.
+      if layoutMode == .letters && !isCapsLocked {
+        let shiftStaysOn = fieldCapitalization == .allCharacters
+        if shiftStaysOn != isShiftEnabled {
+          isShiftEnabled = shiftStaysOn
+          refreshShiftState()
+        }
+      }
+      refreshAfterEdit()
+    case .ended, .cancelled, .failed:
+      guard alternateHeldKey === key else { return }
+      alternateHeldKey = nil
+      keyPopup.hide(owner: key, after: 0.05)
+    default:
+      break
+    }
   }
 
   @objc private func handleShiftTapped() {
@@ -2774,7 +2884,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func typeText(_ text: String) {
     textDocumentProxy.insertText(text)
-    typedDocument = textDocumentProxy.documentIdentifier
+    typedDocument = currentDocumentIdentifier
   }
 
   private func noteFieldReport() {
@@ -2782,16 +2892,28 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     if proxy.hasText || proxy.documentContextBeforeInput?.isEmpty == false
       || proxy.documentContextAfterInput?.isEmpty == false
     {
-      reportingDocument = proxy.documentIdentifier
+      reportingDocument = currentDocumentIdentifier
     }
   }
 
   /// The field holds text it doesn't report: the keyboard typed into it and the host has
   /// reported no text in it since. Some hosts never report it, so shift and the return key
-  /// can't go by it there.
+  /// can't go by it there. No field id yet: it can't tell, so no.
   private var fieldHidesItsText: Bool {
-    let document = textDocumentProxy.documentIdentifier
+    guard let document = currentDocumentIdentifier else { return false }
     return typedDocument == document && reportingDocument != document
+  }
+
+  /// The field's id, or nil. UITextDocumentProxy declares documentIdentifier non-optional, but iOS hands back nil while
+  /// a field is being set up (on opening, in textDidChange), and bridging that nil to UUID traps. That was the
+  /// keyboard's one crash on the owner's iPhone: 34 reports, 2026-11-10 to 2026-11-14, all
+  /// UUID._unconditionallyBridgeFromObjectiveC in fieldHidesItsText, under a second after launch — the keyboard
+  /// "sometimes doesn't open" (G57). Read through Objective-C instead, where nil stays nil.
+  private var currentDocumentIdentifier: UUID? {
+    guard let proxy = textDocumentProxy as? NSObject,
+          proxy.responds(to: NSSelectorFromString("documentIdentifier"))
+    else { return nil }
+    return proxy.value(forKey: "documentIdentifier") as? UUID
   }
 
   private static let toneMenuItems: [(value: String, title: String)] = [
@@ -2991,8 +3113,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     keyboardRowsStack.addLayoutGuide(keyWidthGuide)
     let guideWidth = keyWidthGuide.widthAnchor.constraint(
       equalTo: keyboardRowsStack.widthAnchor,
-      multiplier: 1 / Self.lettersPerRow,
-      constant: -(Self.lettersPerRow - 1) / Self.lettersPerRow * metrics.keyGap
+      multiplier: 1 / Self.guideKeysPerRow,
+      constant: -(Self.guideKeysPerRow - 1) / Self.guideKeysPerRow * metrics.keyGap
     )
     NSLayoutConstraint.activate([
       guideWidth,
@@ -3009,12 +3131,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func buildKeyboardIfNeeded() {
     guard !didBuildKeyboard else {
-      // Gapla: the alphabet is picked in the app; a change shows the next time the keyboard opens.
-      if builtWithNewAlphabet != Self.gaplaUsesNewAlphabet {
-        rebuildKeyboard()
-      } else {
-        refreshVisibleKeyboardMode()
-      }
+      refreshVisibleKeyboardMode()
       return
     }
     didBuildKeyboard = true
@@ -3033,17 +3150,43 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ş", ","],
     ["z", "x", "c", "v", "b", "n", "m", "ö", "ç"],
   ]
-  /// Letter keys across the widest row; the key width guide divides the keyboard by it.
-  private static let lettersPerRow: CGFloat = 11
-  private var builtWithNewAlphabet = false
+  // Gapla (G58, owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md]): the other languages copy Apple's iPhone
+  // layouts. Russian ЙЦУКЕН, with ё and ъ on the held е and ь (KeyboardLanguage.alternate); English QWERTY; Turkish Q,
+  // with the dotless ı in row 1 and the dotted i at row 2's end. Their shift and delete follow addThirdRow's rule.
+  private static let letterRowsRussian: [[String]] = [
+    ["й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х"],
+    ["ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э"],
+    ["я", "ч", "с", "м", "и", "т", "ь", "б", "ю"],
+  ]
+  private static let letterRowsEnglish: [[String]] = [
+    ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+    ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+    ["z", "x", "c", "v", "b", "n", "m"],
+  ]
+  private static let letterRowsTurkish: [[String]] = [
+    ["q", "w", "e", "r", "t", "y", "u", "ı", "o", "p", "ğ", "ü"],
+    ["a", "s", "d", "f", "g", "h", "j", "k", "l", "ş", "i"],
+    ["z", "x", "c", "v", "b", "n", "m", "ö", "ç"],
+  ]
 
-  /// The app saves "yangi" under this key in the App Group to pick the new alphabet.
-  private static var gaplaUsesNewAlphabet: Bool {
-    UserDefaults(suiteName: "group.\(resolvedContainingAppBundleID)")?
-      .string(forKey: "gapla_alifbo") == "yangi"
+  /// keyWidthGuide is one of this many keys across the row in every language. Every width outside the letter rows
+  /// (the 123 and #+= pages, the bottom row, the emoji page, the iPad's bottom row) is measured in it, so those keep
+  /// their frames whatever the language (G58). It is the Uzbek letter key.
+  private static let guideKeysPerRow: CGFloat = 11
+
+  /// The keyboard language's letter rows.
+  private var letterRows: [[String]] {
+    switch keyboardLanguage {
+    case .uz: return Self.letterRowsGapla
+    case .ru: return Self.letterRowsRussian
+    case .en: return Self.letterRowsEnglish
+    case .tr: return Self.letterRowsTurkish
+    }
   }
 
-  private var letterRows: [[String]] { Self.letterRowsGapla }
+  /// Letter keys across the language's widest row (11 Uzbek and Russian, 10 English, 12 Turkish): its letter key is
+  /// the row less its gaps, divided by this (widthOfLetterKeys).
+  private var lettersPerRow: CGFloat { CGFloat(letterRows.map { $0.count }.max() ?? 10) }
   // (display, output): the quote keys show curly marks and insert straight ones, which
   // smartQuoteSubstitution turns into context-aware curly quotes.
   // Gapla (G43, owner 2026-11-11, with screenshots of Apple's keyboard on his iPhone): [so'zlari: bilim/gapla-goyalar-royxati.md]. His region puts ₽ on the 123 page and $ € £ • on
@@ -3094,8 +3237,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     keyboardRowsStack.addArrangedSubview(clipboardRowsStack)
     emojiButton = nil
     clipboardPanel = nil
+    alternateHeldKey = nil
 
-    builtWithNewAlphabet = Self.gaplaUsesNewAlphabet
     let letters = letterRows.map { row in row.map { (display: $0, output: $0) } }
     if builtForTablet {
       addTabletLetterRows(letters, to: lettersRowsStack)
@@ -3122,18 +3265,41 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// Gapla (G46): a width in Apple's ten-letter key unit. Gapla's letter rows hold eleven keys
   /// (ğ, ş and the comma), so its letters are narrower, but the bottom row keeps Apple's
   /// widths — measured on the owner's iPhone: 123 46.7pt, emoji 47pt, return 100pt.
-  /// One Apple key = (lettersPerRow / 10) Gapla keys + ((lettersPerRow − 10) / 10) gaps.
+  /// G58: a ten-key row in the fixed guide unit, so it never changes with the keyboard's language.
   private func widthOfAppleKeys(
     _ view: UIView,
     keys: CGFloat,
     gaps: CGFloat = 0,
     priority: UILayoutPriority = .required
   ) -> NSLayoutConstraint {
-    let ratio = Self.lettersPerRow / 10
+    widthOfRowKeys(view, keys: keys, gaps: gaps, perRow: 10, priority: priority)
+  }
+
+  /// Gapla (G58): a width in the keyboard language's letter key — its widest row's keys share the row (lettersPerRow).
+  private func widthOfLetterKeys(
+    _ view: UIView,
+    keys: CGFloat,
+    gaps: CGFloat = 0,
+    priority: UILayoutPriority = .required
+  ) -> NSLayoutConstraint {
+    widthOfRowKeys(view, keys: keys, gaps: gaps, perRow: lettersPerRow, priority: priority)
+  }
+
+  /// A width of `keys` keys plus `gaps` key gaps, where a key is one of `perRow` equal keys across the row. The row is
+  /// guideKeysPerRow guide keys and (guideKeysPerRow − 1) gaps, or perRow keys and (perRow − 1) gaps, so one such key =
+  /// (guideKeysPerRow / perRow) guide keys + ((guideKeysPerRow − perRow) / perRow) gaps.
+  private func widthOfRowKeys(
+    _ view: UIView,
+    keys: CGFloat,
+    gaps: CGFloat,
+    perRow: CGFloat,
+    priority: UILayoutPriority
+  ) -> NSLayoutConstraint {
+    let guideKeys = Self.guideKeysPerRow
     return widthOfKeys(
       view,
-      keys: keys * ratio,
-      gaps: gaps + keys * (Self.lettersPerRow - 10) / 10,
+      keys: keys * guideKeys / perRow,
+      gaps: gaps + keys * (guideKeys - perRow) / perRow,
       priority: priority
     )
   }
@@ -3153,10 +3319,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     return constraint
   }
 
-  /// A letter key's width at the current keyboard width, before layout has run.
+  /// A guide key's width at the current keyboard width, before layout has run.
   private var estimatedKeyWidth: CGFloat {
     let width = lastMetricsWidth > 0 ? lastMetricsWidth : UIScreen.main.bounds.width
-    let keys = Self.lettersPerRow
+    let keys = Self.guideKeysPerRow
     return max(0, (width - 2 * metrics.sideMargin - (keys - 1) * metrics.keyGap) / keys)
   }
 
@@ -3196,7 +3362,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       [keyboardRowsStack, lettersRowsStack, numbersRowsStack, symbolsRowsStack, emojiRowsStack, clipboardRowsStack].forEach {
         $0.spacing = metrics.rowGap
       }
-      keyWidthGuideConstraint?.constant = -(Self.lettersPerRow - 1) / Self.lettersPerRow * metrics.keyGap
+      keyWidthGuideConstraint?.constant = -(Self.guideKeysPerRow - 1) / Self.guideKeysPerRow * metrics.keyGap
       topBarHeightConstraint?.constant = metrics.stripTop + metrics.stripHeight
       updateStripConstraints()
     }
@@ -3473,9 +3639,21 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     return first.isUppercase ? GaplaTavsiya.capitalizedFirst(word) : word
   }
 
+  /// Gapla (G58): the word suggestions are Uzbek. In any other keyboard language nothing is suggested, no word is
+  /// counted and nothing goes to the server — the one switch every suggestion path asks: tavsiyaFieldAllowed (shown,
+  /// counted, picked), the typed word, and startTavsiyaIfOn and viewWillDisappear (read, fetched, sent).
+  private var tavsiyaOn: Bool { keyboardLanguage == .uz }
+
+  /// G58: the saved word list is read, and fetched again when due, only while the keyboard is in Uzbek.
+  private func startTavsiyaIfOn() {
+    guard hasFullAccess, tavsiyaOn else { return }
+    GaplaTavsiya.shared.start(accessGroup: "group.\(Self.resolvedContainingAppBundleID)")
+  }
+
   /// Contract rule 6: no suggestions and no counting in password, e-mail, address, number or name-and-phone fields, or
-  /// where the field turns autocorrection off — Apple's keyboard hides its suggestions there too.
+  /// where the field turns autocorrection off — Apple's keyboard hides its suggestions there too. G58: Uzbek only.
   private var tavsiyaFieldAllowed: Bool {
+    guard tavsiyaOn else { return false }
     let proxy = textDocumentProxy
     if proxy.isSecureTextEntry == true { return false }
     if (proxy.autocorrectionType ?? .default) == .no { return false }
@@ -3672,9 +3850,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
         rowStack.trailingAnchor.constraint(equalTo: rowContainer.trailingAnchor),
       ]
     } else {
+      // G58: letter rows, in the keyboard language's letter key.
       horizontal = [
         rowStack.centerXAnchor.constraint(equalTo: rowContainer.centerXAnchor),
-        widthOfKeys(rowStack, keys: CGFloat(keys.count), gaps: CGFloat(keys.count - 1)),
+        widthOfLetterKeys(rowStack, keys: CGFloat(keys.count), gaps: CGFloat(keys.count - 1)),
       ]
     }
     NSLayoutConstraint.activate(horizontal + [
@@ -3709,7 +3888,16 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
           commaPress.minimumPressDuration = 0.4
           button.addGestureRecognizer(commaPress)
         }
-      default: break
+      default:
+        // Gapla (G58): letters with an Apple alternate type it when held (Russian е → ё, ь → ъ).
+        if registersLetters, keyboardLanguage.alternate(for: key.output) != nil {
+          let alternatePress = UILongPressGestureRecognizer(
+            target: self,
+            action: #selector(handleAlternateLongPress(_:))
+          )
+          alternatePress.minimumPressDuration = 0.4
+          button.addGestureRecognizer(alternatePress)
+        }
       }
       button.addTarget(self, action: #selector(handleCharacterKeyTapped(_:)), for: .touchUpInside)
       button.addTarget(self, action: #selector(handleCharacterKeyDown(_:)), for: .touchDown)
@@ -3811,9 +3999,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     to stack: UIStackView
   ) {
     let rowContainer = addRowContainer(to: stack)
-    // Gapla: with more letters in the row, shift and delete give up width so the row fits.
+    // Gapla: with more letters in the row, shift and delete give up width so the row fits. G58: all three in the
+    // keyboard language's letter key — Uzbek and Russian 1 key each, English 1.35, Turkish 1.35 of its narrower key.
     let slots = CGFloat(letterSlots)
-    let functionKeyWidth = min(metrics.functionKeys, (Self.lettersPerRow - slots) / 2)
+    let functionKeyWidth = min(metrics.functionKeys, (lettersPerRow - slots) / 2)
 
     let backspace = makeBackspaceKey()
 
@@ -3824,11 +4013,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     }
     NSLayoutConstraint.activate([
       leadingKey.leadingAnchor.constraint(equalTo: rowContainer.leadingAnchor),
-      widthOfKeys(leadingKey, keys: functionKeyWidth),
+      widthOfLetterKeys(leadingKey, keys: functionKeyWidth),
       backspace.trailingAnchor.constraint(equalTo: rowContainer.trailingAnchor),
-      widthOfKeys(backspace, keys: functionKeyWidth),
+      widthOfLetterKeys(backspace, keys: functionKeyWidth),
       keys.centerXAnchor.constraint(equalTo: rowContainer.centerXAnchor),
-      widthOfKeys(keys, keys: slots, gaps: slots - 1),
+      widthOfLetterKeys(keys, keys: slots, gaps: slots - 1),
     ])
   }
 
@@ -3850,16 +4039,30 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private static let tabletBottomGlobeKeys: CGFloat = 0.9
 
   private func addTabletLetterRows(_ letters: [[(display: String, output: String)]], to stack: UIStackView) {
+    // G58: every language keeps this shape — delete after row 1, return after row 2, a shift at each end of row 3 and
+    // the full stop after its last letter. The three rows span as many letter widths as the widest needs at the sizes
+    // above, and the function keys take what each row's letters leave, so letter keys stay equal across rows. Uzbek
+    // and Russian keep 1.5 · 1.5 · 1.25 (12.5); English gets 1.5 · 2.5 · 1.75 (11.5), Turkish 1.5 · 2.5 · 1.75 (13.5).
+    let thirdRow = letters[2] + [(display: ".", output: ".")]
+    let rowKeys = max(
+      CGFloat(letters[0].count) + Self.tabletDeleteKeys,
+      CGFloat(letters[1].count) + Self.tabletReturnKeys,
+      CGFloat(thirdRow.count) + 2 * Self.tabletShiftKeys
+    )
+    let deleteKeys = rowKeys - CGFloat(letters[0].count)
+    let returnKeys = rowKeys - CGFloat(letters[1].count)
+    let shiftKeys = (rowKeys - CGFloat(thirdRow.count)) / 2
+
     addTabletRow(
       keys: makeKeyStack(letters[0], registersLetters: true),
-      trailing: [(makeBackspaceKey(), Self.tabletDeleteKeys)],
+      trailing: [(makeBackspaceKey(), deleteKeys)],
       to: stack
     )
     let returnKey = makeReturnKey()
     returnButton = returnKey
     addTabletRow(
       keys: makeKeyStack(letters[1], registersLetters: true),
-      trailing: [(returnKey, Self.tabletReturnKeys)],
+      trailing: [(returnKey, returnKeys)],
       to: stack
     )
     let leftShift = makeShiftKey()
@@ -3867,9 +4070,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     shiftButton = leftShift
     tabletExtraShiftButtons = [rightShift]
     addTabletRow(
-      leading: [(leftShift, Self.tabletShiftKeys)],
-      keys: makeKeyStack(letters[2] + [(display: ".", output: ".")], registersLetters: true),
-      trailing: [(rightShift, Self.tabletShiftKeys)],
+      leading: [(leftShift, shiftKeys)],
+      keys: makeKeyStack(thirdRow, registersLetters: true),
+      trailing: [(rightShift, shiftKeys)],
       to: stack
     )
   }
@@ -3931,7 +4134,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     NSLayoutConstraint.activate(constraints)
   }
 
-  /// .?123 · globe (or emoji) · space · field keys · .?123 · hide keyboard.
+  /// .?123 · globe (or emoji) · language · space · field keys · .?123 · hide keyboard.
   private func addTabletBottomRow(to stack: UIStackView) {
     let row = UIStackView()
     row.axis = .horizontal
@@ -3953,6 +4156,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     emojiButton.addTarget(self, action: #selector(handleEmojiKeyTapped), for: .touchUpInside)
     self.emojiButton = emojiButton
 
+    // G58: the language key, left of the space bar, as on the phone.
+    let languageButton = makeLanguageKey()
     let spaceButton = makeSpaceKey()
     self.spaceButton = spaceButton
     let shortcuts = makeShortcutKeys()
@@ -3962,7 +4167,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     hideKey.accessibilityLabel = "Klaviaturani yopish"
     hideKey.addTarget(self, action: #selector(handleHideKeyboardTapped), for: .touchUpInside)
 
-    ([leftMode, globeButton, emojiButton, spaceButton] + shortcuts + [rightMode, hideKey]).forEach(row.addArrangedSubview)
+    ([leftMode, globeButton, emojiButton, languageButton, spaceButton] + shortcuts + [rightMode, hideKey])
+      .forEach(row.addArrangedSubview)
 
     let hideable = UILayoutPriority.required - 1
     bottomRowConstraints = BottomRowConstraints(
@@ -3982,6 +4188,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       widthOfKeys(hideKey, keys: Self.tabletBottomSideKeys),
       widthOfKeys(globeButton, keys: Self.tabletBottomGlobeKeys, priority: hideable),
       widthOfKeys(emojiButton, keys: Self.tabletBottomGlobeKeys, priority: hideable),
+      widthOfKeys(languageButton, keys: Self.tabletBottomGlobeKeys, priority: hideable),
     ])
   }
 
@@ -4001,8 +4208,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     spaceButton.addTarget(self, action: #selector(handleSpaceTapped), for: .touchUpInside)
     spaceButton.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
     spaceButton.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
-    // Blank, as Apple's is.
+    // Gapla (G58): the space bar names the keyboard's language, as Apple's does with several keyboards, at the size of
+    // the 123 pages' "123" key and on the "123" label's baseline.
+    spaceButton.setTitle(keyboardLanguage.name, for: .normal)
+    spaceButton.titleLabel?.font = KeyFont.pageLabel
+    spaceButton.titleBaselineFromCenter = metrics.keycaps.label123.baseline
     spaceButton.accessibilityLabel = "bo'sh joy"
+    spaceButton.accessibilityValue = keyboardLanguage.name
     let spaceCursorPress = UILongPressGestureRecognizer(
       target: self,
       action: #selector(handleSpaceLongPress(_:))
@@ -4022,7 +4234,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     }
   }
 
-  /// 123 · (globe) · space · field keys · return. Widths follow Apple's: 123 ends under Z
+  /// 123 · globe or emoji · language (G58) · space · field keys · return. Widths follow Apple's: 123 ends under Z
   /// and return starts under M; the field keys and return change with the keyboard type.
   private func addMainBottomRow(to stack: UIStackView) {
     let row = UIStackView()
@@ -4046,6 +4258,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     emojiButton.addTarget(self, action: #selector(handleEmojiKeyTapped), for: .touchUpInside)
     self.emojiButton = emojiButton
 
+    // Gapla (G58): the language key, between the emoji (or globe) key and the space bar, which gives up its width.
+    let languageButton = makeLanguageKey()
+
     let spaceButton = makeSpaceKey()
     self.spaceButton = spaceButton
 
@@ -4055,7 +4270,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let returnButton = makeReturnKey()
     self.returnButton = returnButton
 
-    ([modeButton, globeButton, emojiButton, spaceButton] + shortcuts + [returnButton]).forEach(row.addArrangedSubview)
+    ([modeButton, globeButton, emojiButton, languageButton, spaceButton] + shortcuts + [returnButton])
+      .forEach(row.addArrangedSubview)
 
     // Keys that can hide in the stack get 999 widths, so the stack's own zero-width
     // hiding constraint wins without a conflict.
@@ -4081,12 +4297,101 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       )
     )
     // 123 always shares its width now: with the globe on home-button phones, with the emoji
-    // key elsewhere (G45).
+    // key elsewhere (G45). G58: the language key is as wide as each half.
     NSLayoutConstraint.activate([
       halfBottomKey(modeButton),
       halfBottomKey(globeButton),
       halfBottomKey(emojiButton),
+      halfBottomKey(languageButton),
     ])
+  }
+
+  // MARK: Gapla keyboard languages (G58)
+
+  /// The language key: the language's short name, as text — on Home-button phones the system's globe key sits beside
+  /// it, so it is never a globe. A tap steps to the next language on in the app; held, its menu lists them, as the
+  /// toolbar's mode menu does. Hidden when the app has only Uzbek on.
+  private func makeLanguageKey() -> KeyButton {
+    let button = makeKeyButton(display: keyboardLanguage.keyLabel, role: .utility)
+    button.accessibilityLabel = "Klaviatura tili"
+    button.accessibilityValue = keyboardLanguage.name
+    button.isHidden = enabledLanguages.count < 2
+    button.addTarget(self, action: #selector(handleLanguageKeyTapped), for: .touchUpInside)
+    let actions: [UIAction] = enabledLanguages.map { language in
+      UIAction(title: language.name, state: language == keyboardLanguage ? .on : .off) { [weak self] _ in
+        self?.selectKeyboardLanguage(language)
+      }
+    }
+    button.menu = UIMenu(title: "Klaviatura tili", children: actions)
+    button.showsMenuAsPrimaryAction = false
+    return button
+  }
+
+  @objc private func handleLanguageKeyTapped() {
+    playKeyClick()
+    guard enabledLanguages.count > 1, let index = enabledLanguages.firstIndex(of: keyboardLanguage) else { return }
+    selectKeyboardLanguage(enabledLanguages[(index + 1) % enabledLanguages.count])
+  }
+
+  /// The owner picked `language` on the language key. It is remembered for the next opening. The keys are rebuilt after
+  /// this event, as the rebuild replaces the key that sent it.
+  private func selectKeyboardLanguage(_ language: KeyboardLanguage) {
+    guard language != keyboardLanguage, enabledLanguages.contains(language) else { return }
+    DispatchQueue.main.async { [weak self] in self?.switchKeyboardLanguage(to: language) }
+  }
+
+  private func switchKeyboardLanguage(to language: KeyboardLanguage) {
+    guard language != keyboardLanguage else { return }
+    keyboardLanguage = language
+    Self.rememberedKeyboardLanguage = language
+    primaryLanguage = language.primaryLanguage
+    applyKeyboardLanguageChange()
+    startTavsiyaIfOn()
+  }
+
+  /// Reads the languages the app has on (App Group) and the one last used (this keyboard's own defaults). A language
+  /// the app has since turned off falls back to Uzbek. True when either changed since the keys were last built.
+  @discardableResult
+  private func loadKeyboardLanguages() -> Bool {
+    let enabled = KeyboardHandoffProvider.shared.keyboardLanguages()
+    var language = Self.rememberedKeyboardLanguage
+    if !enabled.contains(language) {
+      language = .uz
+      Self.rememberedKeyboardLanguage = .uz
+    }
+    let changed = enabled != enabledLanguages || language != keyboardLanguage
+    enabledLanguages = enabled
+    keyboardLanguage = language
+    primaryLanguage = language.primaryLanguage
+    return changed
+  }
+
+  /// The keys follow a new keyboard language: back to the letters page, its rows, its name on the space bar and the
+  /// language key's list. The word being typed no longer counts toward the suggestions.
+  private func applyKeyboardLanguageChange() {
+    tavsiyaTypedWord = ""
+    tavsiyaLastCounted = nil
+    layoutMode = .letters
+    typedOnSymbolPage = false
+    isCapsLocked = false
+    isShiftEnabled = shouldAutoCapitalize()
+    if didBuildKeyboard {
+      rebuildKeyboard()
+    } else {
+      refreshTavsiya()
+    }
+    logMemory("til-\(keyboardLanguage.rawValue)")
+  }
+
+  /// The language last picked on the language key, kept in the keyboard's own defaults (no Full Access needed).
+  private static let keyboardLanguageKey = "gapla_klaviatura_til"
+  private static var rememberedKeyboardLanguage: KeyboardLanguage {
+    get {
+      UserDefaults.standard.string(forKey: keyboardLanguageKey).flatMap(KeyboardLanguage.init(rawValue:)) ?? .uz
+    }
+    set {
+      UserDefaults.standard.set(newValue.rawValue, forKey: keyboardLanguageKey)
+    }
   }
 
   private func makeNextKeyboardButton() -> KeyButton {
@@ -4148,7 +4453,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
     for button in characterButtons {
       guard let output = button.output else { continue }
-      button.setTitle(isShiftEnabled ? output.uppercased() : output, for: .normal)
+      // G58: capitals in the keyboard's language (Turkish i → İ).
+      button.setTitle(isShiftEnabled ? keyboardLanguage.uppercased(output) : output, for: .normal)
       button.titleLabel?.font = isShiftEnabled ? metrics.keycaps.uppercase : metrics.keycaps.lowercase
       button.titleBaselineFromCenter =
         KeyFont.characterBaseline + (isShiftEnabled ? 0 : metrics.keycaps.lowercaseBaselineShift)
@@ -6014,6 +6320,16 @@ private struct KeyboardHandoffProvider {
   func isToneApplicable() -> Bool {
     guard let defaults = Self.sharedDefaults else { return false }
     return defaults.string(forKey: toneApplicableKey) != "0"
+  }
+
+  // Gapla (G58): the keyboard languages the app has on, saved as "uz,ru,en,tr" (src/lib/keyboardLanguages.ts). Not
+  // saved yet, or no App Group (Full Access off): all four, the default. Uzbek is always on; the order is the key's.
+  private let keyboardLanguagesKey = "gapla_klaviatura_tillari"
+
+  func keyboardLanguages() -> [KeyboardLanguage] {
+    guard let raw = Self.sharedDefaults?.string(forKey: keyboardLanguagesKey) else { return KeyboardLanguage.allCases }
+    let saved = Set(raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+    return KeyboardLanguage.allCases.filter { $0 == .uz || saved.contains($0.rawValue) }
   }
 
   // MARK: Dictation agent

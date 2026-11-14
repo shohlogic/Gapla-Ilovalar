@@ -60,6 +60,10 @@ export default function AccountLayout() {
         options={{ title: 'Klaviatura ohangi', headerLargeTitle: false }}
       />
       <Stack.Screen
+        name="keyboard-languages"
+        options={{ title: 'Klaviatura tillari', headerLargeTitle: false }}
+      />
+      <Stack.Screen
         name="hardware-keyboard"
         options={{ title: 'Tashqi klaviatura', headerLargeTitle: false }}
       />
