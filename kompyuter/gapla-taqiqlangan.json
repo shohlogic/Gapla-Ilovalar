@@ -1,0 +1,107 @@
+{
+  "izoh": "Gapla: yig'ishdan oldingi taqiq ro'yxati (egasi, 2026-11-11, G44: «hamma ilovalardan eski izlarni o'chirish kerak, bu meniki bo'ladi faqat»). Tekshiruvchi — scripts/gapla-iz-tekshir.js (electron-builder → beforePack). «manzillar» — yuboriladigan hamma kodda va qurilgan oynada taqiq (katta-kichik harf farqsiz). «nomlar» — foydalanuvchi ko'radigan matnlarda taqiq: til fayllari, o'rnatuvchi sozlamasi, package.json (katta-kichik harf farqlanadi, so'z chegarasi bilan). Istisno faqat sababi bilan. «eski_rasmlar» (2026-11-12, G44: «ustanovka qilayotganimda ham eski brend loyihalari va animatsiyalari chiqayotgan edi») — eski brend rasmlarining mazmun izi (sha256, birinchi 16 belgi): fayl nomi o'zgarsa ham, shu rasm ilovaga qaytsa yig'ish to'xtaydi. Ilovaga kiradigan qolgan har rasm gapla-rasmlar.json da ko'rilgan bo'lishi shart.",
+  "manzillar": [
+    "openwhispr.com",
+    "github.com/OpenWhispr",
+    "api.github.com/repos/OpenWhispr",
+    "discord.gg/yZWC9WTtX7",
+    "gizmolabs"
+  ],
+  "nomlar": [
+    "OpenWhispr",
+    "Open Whispr",
+    "OpenWhispr Team",
+    "DevEmperor",
+    "Gizmo Labs"
+  ],
+  "istisnolar": [
+    {
+      "fayl": "src/helpers/whisperVulkanManager.js",
+      "matn": "api.github.com/repos/OpenWhispr/whisper.cpp",
+      "sabab": "Videokarta paketi (Vulkan, 24 MB) hozircha faqat OpenWhispr'ning GitHub relizida. Gapla serveriga ko'chirilgach shu istisno o'chiriladi."
+    },
+    {
+      "fayl": "src/helpers/whisperCudaManager.js",
+      "matn": "api.github.com/repos/OpenWhispr/whisper.cpp",
+      "sabab": "CUDA paketi (773 MB) — faqat foydalanuvchi Sozlamalarda bosganda yuklanadi; Vulkan bilan birga Gapla serveriga ko'chiriladi."
+    },
+    {
+      "fayl": "src/assets/icons/google-calendar.svg",
+      "matn": "4079ED",
+      "sabab": "Google Calendar'ning o'z belgisi (Google ko'ki) — ulanish tugmasida; eski brend rangi bilan tasodifan bir xil."
+    }
+  ],
+  "eski_rasmlar": {
+    "710f5cede9d2db97": "OpenWhispr asoschisining surati (tanishuv namunasi)",
+    "8429025abaccb0c4": "«Meeting Detected» — OpenWhispr belgili bildirishnoma",
+    "903b32b138116dd3": "OpenWhispr yordamchisi reklama rasmi (barg belgisi)",
+    "7c915b78535e58c3": "OpenWhispr belgisi (asl iconTemplate@3x.png)",
+    "779ae3f5dac8d4b5": "OpenWhispr belgisi (Mac Icon Composer)",
+    "ada0f5460d1f8ed7": "OpenWhispr belgisi (asl icon.icns)",
+    "a404c6a3ffb7957c": "OpenWhispr ko'k-binafsha gradienti (tanishuv foni ichida)",
+    "d603b29117ba6bb7": "OpenWhispr gradientli tanishuv foni (tun)",
+    "ee8398b934db9690": "OpenWhispr gradientli tanishuv foni (kun)",
+    "7afaa4525727413a": "OpenWhispr belgisi (asl icon.png)",
+    "60f9ae7ec6047d27": "OpenWhispr belgisi (asl icon.ico)",
+    "7fea1457abf91023": "OpenWhispr belgisi (asl logo.svg)",
+    "2079f7a3eba60e0d": "NSIS'ning o'z logosi (o'rnatuvchi yon rasmi, standart)"
+  },
+  "eski_ranglar": {
+    "izoh": "Eski brendning ko'k-binafsha ranglari va kodning o'zida chizilgan logosi (2026-11-12, egasi: «Ha, Gapla rangi»). src ichidagi kod va uslub fayllarida hamda qurilgan oynada (src/dist) taqiq; katta-kichik harf va bo'sh joy farqsiz. Sharning (G47) o'z ranglari bu ro'yxatda yo'q.",
+    "qiymatlar": [
+      "#4577e9",
+      "#5588f0",
+      "#3466e2",
+      "#58a7fe",
+      "#1a7bff",
+      "#1f80ff",
+      "#2a88ff",
+      "#62afff",
+      "#8787ff",
+      "#2056df",
+      "#6c50e9",
+      "#154bd4",
+      "#163992",
+      "#5b81e4",
+      "#4079ed",
+      "#244587",
+      "#6366f1",
+      "#7c3aed",
+      "#a78bfa",
+      "#8faaff",
+      "#7da2f2",
+      "#b9cdf8",
+      "#2e3659",
+      "oklch(0.65 0.2 260",
+      "oklch(0.55 0.22 285",
+      "oklch(0.68 0.18 285",
+      "oklch(0.68 0.18 240",
+      "oklch(0.67 0.1 250",
+      "oklch(0.5 0.15 260",
+      "oklch(0.72 0.22 260",
+      "oklch(0.7 0.18 280",
+      "oklch(0.62 0.22 260",
+      "rgb(52 102 226",
+      "rgba(37,99,235",
+      "rgba(100,149,237",
+      "rgba(37,99,212",
+      "rgba(32,86,223",
+      "rgb(143,170,255",
+      "via-blue-950",
+      "to-indigo-900",
+      "text-indigo-200",
+      "text-indigo-600",
+      "text-indigo-700",
+      "border-indigo-500",
+      "ring-indigo-500",
+      "ring-blue-500",
+      "#dae5fd",
+      "#233968",
+      "#1b2844",
+      "#2b3a63",
+      "#151c2a",
+      "#e8effd",
+      "#f2f6ff"
+    ]
+  }
+}

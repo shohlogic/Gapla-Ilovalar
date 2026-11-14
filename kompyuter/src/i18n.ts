@@ -1,0 +1,132 @@
+import i18n from "i18next";
+import { initReactI18next } from "react-i18next";
+import { PROMPTS_BY_LOCALE } from "./locales/prompts";
+import { TRANSLATIONS_BY_LOCALE } from "./locales/translations";
+
+export const SUPPORTED_UI_LANGUAGES = [
+  "uz",
+  "en",
+  "ar",
+  "es",
+  "fr",
+  "de",
+  "pt",
+  "it",
+  "ru",
+  "ja",
+  "zh-CN",
+  "zh-TW",
+] as const;
+export type UiLanguage = (typeof SUPPORTED_UI_LANGUAGES)[number];
+
+export function normalizeUiLanguage(language: string | null | undefined): UiLanguage {
+  const candidate = (language || "").trim();
+
+  // Check full language-region code first (e.g. "zh-CN", "zh-TW")
+  const normalized = candidate.replace(/_/g, "-");
+  const fullMatch = SUPPORTED_UI_LANGUAGES.find(
+    (lang) => lang.toLowerCase() === normalized.toLowerCase()
+  );
+  if (fullMatch) return fullMatch;
+
+  // Keep in sync with src/helpers/i18nMain.js. Chinese is the only UI language
+  // that is not the primary subtag; OS/browser tags must map onto zh-CN/zh-TW.
+  const lower = normalized.toLowerCase();
+  if (lower === "zh" || lower.startsWith("zh-")) {
+    const parts = lower.split("-");
+    if (parts.some((part) => part === "hant" || part === "tw" || part === "hk" || part === "mo")) {
+      return "zh-TW";
+    }
+    return "zh-CN";
+  }
+
+  // Fall back to base language code (e.g. "en" from "en-US")
+  const base = lower.split("-")[0] as UiLanguage;
+  if (SUPPORTED_UI_LANGUAGES.includes(base)) {
+    return base;
+  }
+
+  return "en";
+}
+
+const resources = {
+  uz: {
+    translation: TRANSLATIONS_BY_LOCALE.uz,
+    prompts: PROMPTS_BY_LOCALE.uz,
+  },
+  en: {
+    translation: TRANSLATIONS_BY_LOCALE.en,
+    prompts: PROMPTS_BY_LOCALE.en,
+  },
+  ar: {
+    translation: TRANSLATIONS_BY_LOCALE.ar,
+    prompts: PROMPTS_BY_LOCALE.ar,
+  },
+  es: {
+    translation: TRANSLATIONS_BY_LOCALE.es,
+    prompts: PROMPTS_BY_LOCALE.es,
+  },
+  fr: {
+    translation: TRANSLATIONS_BY_LOCALE.fr,
+    prompts: PROMPTS_BY_LOCALE.fr,
+  },
+  de: {
+    translation: TRANSLATIONS_BY_LOCALE.de,
+    prompts: PROMPTS_BY_LOCALE.de,
+  },
+  pt: {
+    translation: TRANSLATIONS_BY_LOCALE.pt,
+    prompts: PROMPTS_BY_LOCALE.pt,
+  },
+  it: {
+    translation: TRANSLATIONS_BY_LOCALE.it,
+    prompts: PROMPTS_BY_LOCALE.it,
+  },
+  ru: {
+    translation: TRANSLATIONS_BY_LOCALE.ru,
+    prompts: PROMPTS_BY_LOCALE.ru,
+  },
+  ja: {
+    translation: TRANSLATIONS_BY_LOCALE.ja,
+    prompts: PROMPTS_BY_LOCALE.ja,
+  },
+  "zh-CN": {
+    translation: TRANSLATIONS_BY_LOCALE["zh-CN"],
+    prompts: PROMPTS_BY_LOCALE["zh-CN"],
+  },
+  "zh-TW": {
+    translation: TRANSLATIONS_BY_LOCALE["zh-TW"],
+    prompts: PROMPTS_BY_LOCALE["zh-TW"],
+  },
+} as const;
+
+const browserLanguage =
+  typeof navigator !== "undefined" ? navigator.language || navigator.languages?.[0] : undefined;
+
+// Gapla: interfeys o'zbekcha. Bir marta (eski o'rnatishda ham) «uz» ga o'tkaziladi, keyin foydalanuvchi
+// tanlovi qoladi. Asosiy jarayon ham shuni qiladi (main.js, GAPLA_UZ_UI).
+if (typeof window !== "undefined" && window.localStorage?.getItem("_gaplaUzUi") !== "1") {
+  window.localStorage?.setItem("_gaplaUzUi", "1");
+  window.localStorage?.setItem("uiLanguage", "uz");
+}
+
+const storageLanguage =
+  typeof window !== "undefined" ? window.localStorage?.getItem("uiLanguage") : undefined;
+
+void browserLanguage; // Gapla: tizim tili emas, o'zbekcha standart
+const initialLanguage = normalizeUiLanguage(storageLanguage || "uz");
+
+void i18n.use(initReactI18next).init({
+  resources,
+  lng: initialLanguage,
+  fallbackLng: "en",
+  ns: ["translation", "prompts"],
+  defaultNS: "translation",
+  interpolation: {
+    escapeValue: false,
+  },
+  returnEmptyString: true,
+  returnNull: false,
+});
+
+export default i18n;

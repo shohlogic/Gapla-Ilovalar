@@ -1,0 +1,18 @@
+{
+  "bridgeUrl": "https://gapla.xaliljonov.uz/v1",
+  "cloudModel": "gapla-orta",
+  "localWhisperModel": "rubaistt",
+  "language": "ru",
+  "dictationKey": "Alt+D,Shift+Alt+D",
+  "holdKey": "Shift+Alt+D",
+  "noAccount": true,
+  "minSpeechSeconds": 0.7,
+  "alphabet": "yangi",
+  "speechFilter": { "absoluteDb": -45, "relativeDb": 10, "floorDb": -60, "speechSeconds": 0.2 },
+  "modes": [
+    { "id": "tez", "label": "Tez", "model": "gapla-tez" },
+    { "id": "orta", "label": "O'rta", "model": "gapla-orta" },
+    { "id": "sekin", "label": "Sekin", "model": "gapla-sekin" },
+    { "id": "lokal", "label": "Lokal (internetsiz)", "local": true }
+  ]
+}

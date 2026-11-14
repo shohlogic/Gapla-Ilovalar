@@ -1,0 +1,12 @@
+{
+  "extends": "electron-builder.json",
+  "extraMetadata": {
+    "name": "gapla",
+    "version": "1.0.0",
+    "windowsTrayIdentity": false
+  },
+  "win": {
+    "azureSignOptions": null,
+    "forceCodeSigning": false
+  }
+}

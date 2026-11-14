@@ -1,0 +1,90 @@
+﻿# Gapla kompyuter ilovasining Mac versiyasini (OpenWhispr asosida) GitHub'ning Mac serverlarida yig'adi (G61, 2026-11-14).
+# Natija: Actions sahifasida ikki fayl — «gapla-mac-arm64» (Apple M1 va keyingilari) va «gapla-mac-x64» (Intel Mac).
+# Bu repo — ochiq NUSXA: asl kod yopiq Gapla-Keyboard reposida (loyihalar/loyiha-gapla-windows/kod), bu yerdagi kompyuter/
+# papkasiga loyihalar/loyiha-gapla-windows/ochiq-nusxa/yangila.py qo'yadi. Ochiq repoda Mac daqiqalari bepul.
+# Imzo yo'q (Apple dasturchi hisobi yo'q): ilova «ad-hoc» imzolanadi — Apple Silicon'da ochilishi uchun shu kerak.
+# Kalit yo'q: diktovka kaliti ilovaning o'zida kiritiladi. Lokal rejim (RubaiSTT) Mac'da hozircha yo'q.
+name: Gapla Mac DMG
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "kompyuter/**"
+      - ".github/workflows/gapla-mac-dmg.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gapla-mac-dmg
+  cancel-in-progress: true
+
+jobs:
+  dmg:
+    name: dmg (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Har protsessor o'z serverida: yuklab olinadigan yordamchi dasturlar (whisper.cpp, sherpa-onnx va boshqalar)
+          # server protsessoriga qarab tanlanadi.
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      # Yuklash skriptlari GitHub relizlarini so'raydi — token so'rov chegarasini oshiradi (faqat o'qish).
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        working-directory: kompyuter
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            kompyuter
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: kompyuter/.nvmrc
+          cache: npm
+          cache-dependency-path: kompyuter/package-lock.json
+
+      - name: npm paketlari
+        run: npm ci
+
+      - name: Mac yordamchi dasturlari va yuklamalar
+        run: npm run prebuild:mac
+
+      - name: Oyna (vite)
+        run: npm run build:renderer
+
+      - name: Yig'ish (.dmg, ad-hoc imzo)
+        # beforePack — eski brend tekshiruvi (scripts/gapla-iz-tekshir.js): eski iz qolsa yig'ish shu yerda to'xtaydi.
+        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+
+      - name: Tekshiruv — imzo, protsessor, Info.plist
+        run: |
+          set -euo pipefail
+          APP=$(find dist -maxdepth 2 -name "Gapla.app" -type d | head -1)
+          echo "Ilova: $APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 | grep -E "Signature|Identifier|Format" || true
+          lipo -archs "$APP/Contents/MacOS/Gapla"
+          /usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" -c "Print CFBundleShortVersionString" -c "Print LSMinimumSystemVersion" "$APP/Contents/Info.plist"
+          ls -lh dist/*.dmg
+
+      - name: .dmg ni yuklash
+        uses: actions/upload-artifact@v4
+        with:
+          name: gapla-mac-${{ matrix.arch }}
+          path: kompyuter/dist/*.dmg
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
