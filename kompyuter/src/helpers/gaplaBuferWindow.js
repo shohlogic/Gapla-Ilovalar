@@ -142,7 +142,7 @@ function setupGaplaBufer({ hotkeyManager, environmentManager }) {
     if (ready) win.webContents.send("gapla-bufer-opened", bufer.cached());
     else pendingOpen = true;
     if (IS_MAC) {
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      // setVisibleOnAllWorkspaces chaqirilmaydi — sababi gaplaTarjimaWindow.js da (toggle).
       win.showInactive();
     } else {
       win.show();

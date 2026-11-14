@@ -364,8 +364,9 @@ function setupGaplaTarjima({ hotkeyManager, environmentManager, windowManager, c
     if (ready) send("gapla-tarjima-opened");
     else pendingOpen = true;
     if (IS_MAC) {
-      // Panel Gapla'ni oldinga chiqarmay klaviaturani oladi (showInactive + focus).
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      // Panel Gapla'ni oldinga chiqarmay klaviaturani oladi (showInactive + focus). setVisibleOnAllWorkspaces
+      // chaqirilmaydi: u ilova turini almashtirib, Gapla'ni bir lahzaga orqaga suradi va panel klaviaturani yo'qotadi
+      // (Mac serveridagi sinov, 2026-11-14). Panel hamma ish stolida o'zi ko'rinadi.
       win.showInactive();
     } else {
       win.show();
