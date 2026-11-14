@@ -14,6 +14,7 @@ interface AppGroupStorageModule {
   removeItem(key: string): boolean;
   setKeyboardStatus(status: string, detail?: string | null): void;
   markKeyboardTiming(name: string): void;
+  gaplaVaqt(qadam: string, job: string | null, extra: string | null): void;
   setSharedServerKey(value: string | null): boolean;
   analyzeSpeechActivity(fileUri: string): Promise<SpeechActivityAnalysis>;
   convertRecordingToWav(fileUri: string): Promise<RecordingConversionResult>;
@@ -58,6 +59,7 @@ type AppGroupStorageEvents = {
     jobId?: string;
     fileSizeBytes?: number;
     recordingDurationMs?: number;
+    stoppedAtMs?: number;
   }) => void;
   onRecordingError: (event: { message: string }) => void;
   onBackgroundRecordingStarted: () => void;
@@ -105,6 +107,16 @@ export const AppGroupStorage = {
   markKeyboardTiming(name: string): void {
     if (!NativeModule) return;
     NativeModule.markKeyboardTiming(name);
+  },
+
+  /** Gapla (G64): one dictation timing line, to the device log and the App Group file (GaplaVaqt.swift). */
+  gaplaVaqt(qadam: string, job: string | null, extra: string | null): void {
+    if (!NativeModule) return;
+    try {
+      NativeModule.gaplaVaqt(qadam, job, extra);
+    } catch {
+      // An older native build without the function: timing is optional.
+    }
   },
 
   /** Gapla (G8): mirrors the Gapla server key for the keyboard's clipboard; null removes it. */
@@ -227,6 +239,7 @@ export function addRecordingStoppedListener(
     jobId?: string;
     fileSizeBytes?: number;
     recordingDurationMs?: number;
+    stoppedAtMs?: number;
   }) => void,
 ): EventSubscription | null {
   if (!NativeModuleEvents) return null;

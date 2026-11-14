@@ -28,6 +28,7 @@ import {
   getDefaultRecorderOptions,
 } from '../utils/expoAudio';
 import { useAudioRecorder } from 'expo-audio';
+import { gaplaVaqt, gaplaVaqtBoshla } from '../lib/gaplaVaqt';
 
 export interface UseAudioRecordingOptions {
   onComplete?: (text: string) => void;
@@ -198,6 +199,10 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       }
 
       stoppingRef.current = true;
+      // Gapla (G64): the in-app recording's timing lines (src/lib/gaplaVaqt.ts).
+      const stoppedAtMs = Date.now();
+      gaplaVaqtBoshla(`ilova-${stoppedAtMs}`, stoppedAtMs);
+      gaplaVaqt('yozuv-toxtadi');
       try {
         await recorder.stop();
         openRef.current = false;
@@ -233,17 +238,24 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         }
       }
 
+      gaplaVaqt('audio-tayyor', {
+        bayt: fileInfo?.exists ? fileInfo.size : undefined,
+        tur: uri.split('.').pop()?.toLowerCase(),
+      });
       const speechAnalysis = await analyzeSpeechActivity(uri, 'recording');
+      gaplaVaqt('ovoz-tekshirildi', { gap_yoq: speechAnalysis?.noSpeechLikely ? 1 : 0 });
       if (speechAnalysis?.noSpeechLikely) {
         throw createNoSpeechError();
       }
       const clientTranscriptionId = `recording-${randomUUID()}`;
 
       const retained = await retainRecording(uri);
+      gaplaVaqt('nusxa-olindi');
       sourceUriToDiscard = null;
       const transcriptionProvider = jobRouteRef.current.provider;
       try {
         await finalizeRecording(retained, transcriptionProvider, clientTranscriptionId);
+        gaplaVaqt('matn-tayyor');
       } catch (transcribeError) {
         if (isCancelled()) {
           await discardRetainedAudio(retained);

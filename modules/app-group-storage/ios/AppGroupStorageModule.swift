@@ -175,6 +175,11 @@ public class AppGroupStorageModule: Module {
       self.markKeyboardTiming(name)
     }
 
+    // Gapla (G64): a dictation timing line from the JS side (src/lib/gaplaVaqt.ts).
+    Function("gaplaVaqt") { (qadam: String, job: String?, extra: String?) -> Void in
+      GaplaVaqt.yoz(qadam, job: job, extra: extra ?? "", appGroupId: self.appGroupId)
+    }
+
     // Gapla (G8): the keyboard's shared clipboard calls the Gapla server with the dictation key.
     // The app keeps that key in its own Keychain; this mirrors it into the App Group's Keychain
     // access group (iOS lists app groups as access groups), so only this app and its keyboard
@@ -955,6 +960,7 @@ public class AppGroupStorageModule: Module {
     audioPipelineLock.lock()
     defer { audioPipelineLock.unlock() }
     logMarker("stopRecording.begin", extra: "reason=\(reason)")
+    let stoppedAtMs = GaplaVaqt.nowMs()
 
     audioStateLock.lock()
     let wasRecording = isClipRecording
@@ -978,6 +984,7 @@ public class AppGroupStorageModule: Module {
       logMarker("stopRecording.noopNoActiveClip", extra: "reason=\(reason)")
       return
     }
+    GaplaVaqt.yoz("yozuv-toxtadi", job: jobId, extra: "sabab=\(reason)", appGroupId: appGroupId)
 
     backgroundTaskId = UIApplication.shared.beginBackgroundTask(withName: "OpenWhisprTranscription") {
       self.endBackgroundTask()
@@ -998,6 +1005,12 @@ public class AppGroupStorageModule: Module {
         "stopRecording.fileReady",
         extra: "bytes=\(fileSize ?? -1) durationMs=\(durationMs)"
       )
+      GaplaVaqt.yoz(
+        "audio-tayyor",
+        job: jobId,
+        extra: "audio_ms=\(stoppedAtMs - startedAtMs) bayt=\(fileSize ?? -1) tur=\(fileUrl.pathExtension.lowercased())",
+        appGroupId: appGroupId
+      )
       sendEvent("onRecordingStopped", [
         "fileUri": fileUrl.absoluteString,
         "fileName": fileUrl.lastPathComponent,
@@ -1005,7 +1018,9 @@ public class AppGroupStorageModule: Module {
         "recordingFormat": fileUrl.pathExtension.lowercased(),
         "jobId": jobId ?? "",
         "fileSizeBytes": fileSize ?? 0,
-        "recordingDurationMs": durationMs
+        "recordingDurationMs": durationMs,
+        // Gapla (G64): when the stop began, for the server's X-Gapla-Yozuv-Tugadi header.
+        "stoppedAtMs": Double(stoppedAtMs)
       ])
     } else {
       setKeyboardStatus("error", detail: "recording_missing_file_url")

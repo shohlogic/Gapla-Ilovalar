@@ -5524,6 +5524,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     )
     KeyboardLog.echo("Inserted pending transcript from app. chars=\(text.count)")
     insertSmartText(text)
+    KeyboardHandoffProvider.shared.gaplaVaqt(
+      "matn-kiritildi",
+      job: KeyboardHandoffProvider.lastConsumedJobId,
+      extra: "belgi=\(text.count) yol=\(trigger)"
+    )
     // Gapla (G47): the text is in; the orb plays done (the tick) and leaves.
     endRecordingOrb(success: true)
     showTransientRecordState(
@@ -6380,6 +6385,36 @@ private struct KeyboardHandoffProvider {
   /// once, instead of a new UserDefaults object on each call (the 0.12 s poll alone made several a
   /// second). Same suite, same data: other processes' writes still show up through it.
   private static let sharedDefaults = UserDefaults(suiteName: "group.\(resolvedContainingAppBundleID)")
+
+  /// Gapla (G64): the job whose text was handed to the keyboard last, for its «matn-kiritildi» line.
+  static var lastConsumedJobId: String?
+  private static let gaplaVaqtQueue = DispatchQueue(label: "uz.gapla.vaqt.klaviatura", qos: .utility)
+
+  /// Gapla (G64): one dictation timing line from the keyboard — the same shape and file as the
+  /// app's (modules/app-group-storage/ios/GaplaVaqt.swift): the device log (`syslog live -m
+  /// gapla-vaqt`) and `gapla-vaqt.log` in the App Group, which the app trims. Never the text.
+  func gaplaVaqt(_ qadam: String, job: String?, extra: String = "") {
+    let jobPart = (job?.isEmpty == false) ? job! : "-"
+    let extraPart = extra.isEmpty ? "" : " \(extra)"
+    let line = "gapla-vaqt job=\(jobPart) qadam=\(qadam) ms=\(Int64(Date().timeIntervalSince1970 * 1000))\(extraPart)"
+    KeyboardLog.ui.notice("\(line, privacy: .public)")
+    let groupId = "group.\(Self.resolvedContainingAppBundleID)"
+    Self.gaplaVaqtQueue.async {
+      guard let directory = FileManager.default.containerURL(
+        forSecurityApplicationGroupIdentifier: groupId
+      ) else { return }
+      let url = directory.appendingPathComponent("gapla-vaqt.log")
+      let data = Data((line + "\n").utf8)
+      if let handle = try? FileHandle(forWritingTo: url) {
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+        try? handle.close()
+      } else {
+        try? data.write(to: url, options: .atomic)
+      }
+    }
+  }
+
   private let pendingTranscriptKey = "keyboard_pending_transcript"
   private let pendingTranscriptJobIdKey = "keyboard_pending_transcript_job_id"
   private let orphanedRawTranscriptKey = "keyboard_orphaned_raw_transcript"
@@ -6494,6 +6529,7 @@ private struct KeyboardHandoffProvider {
       return nil
     }
 
+    Self.lastConsumedJobId = pendingJobId ?? activeJobId
     sharedDefaults.removeObject(forKey: pendingTranscriptKey)
     sharedDefaults.removeObject(forKey: pendingTranscriptJobIdKey)
     sharedDefaults.removeObject(forKey: recordingJobIdKey)
@@ -6824,6 +6860,7 @@ private struct KeyboardHandoffProvider {
 
   func requestStop() {
     guard let defaults = Self.sharedDefaults else { return }
+    gaplaVaqt("toxtat-bosildi", job: defaults.string(forKey: recordingJobIdKey))
     defaults.set("1", forKey: stopRequestedKey)
     defaults.set(String(Int(Date().timeIntervalSince1970 * 1000)), forKey: stopRequestedAtMsKey)
     defaults.set("transcribing", forKey: transcriptionStatusKey)

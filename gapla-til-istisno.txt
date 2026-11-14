@@ -186,3 +186,6 @@ src/services/transcription/TranscriptionService.ts:Transcription error:  # OpenW
 # --- Klaviatura tillari (G58): til o'z nomi bilan yoziladi ---
 plugins/keyboard-extension/ios/KeyboardViewController.swift:English  # inglizcha klaviatura nomi o'z tilida (bo'sh joy tugmasi, til ro'yxati), ruscha «Русский», turkcha «Türkçe» kabi (G58)
 src/lib/keyboardLanguages.ts:English  # inglizcha klaviatura nomi o'z tilida (Klaviatura tillari sahifasi), ruscha «Русский», turkcha «Türkçe» kabi (G58)
+
+# --- Diktovka vaqti (G64): qurilma jurnali qatori, ekranga chiqmaydi ---
+modules/app-group-storage/ios/GaplaVaqt.swift:gapla-vaqt job=  # qurilma jurnalidagi vaqt qatori, ekranga chiqmaydi; kompyuterdan syslog bilan o'qiladi (G64)

@@ -8,6 +8,7 @@ import {
 } from '@/lib/providerEndpoints';
 import modelCatalog from '@/config/providerCatalog.json';
 import { gaplaModelName, getGaplaMode, isGaplaBridge } from '@/lib/gaplaMode';
+import { gaplaVaqt, gaplaVaqtSarlavhalari } from '@/lib/gaplaVaqt';
 import {
   MOBILE_PROVIDER_IDS,
   isTranscriptionScope,
@@ -472,27 +473,38 @@ async function transcribe(
   if (input.language && input.language !== 'auto') parameters.language = input.language;
   if (input.prompt) parameters.prompt = input.prompt;
   const url = buildApiUrl(endpoint, '/audio/transcriptions');
+  // Gapla (G64): the device and the two moments the server logs (src/lib/gaplaVaqt.ts).
+  const gaplaServer = isGaplaBridge(endpoint);
+  const headers = gaplaServer
+    ? { ...authHeaders(apiKey), ...gaplaVaqtSarlavhalari() }
+    : authHeaders(apiKey);
+  const fileMimeType = input.mimeType || 'audio/m4a';
+  if (gaplaServer) {
+    gaplaVaqt('yuborildi', { bayt: size, tur: fileMimeType, rejim: getGaplaMode() });
+  }
   let response: Response;
   try {
     response = await dependencies.requestFile({
       url,
       fileUri: input.audioUri,
       fileFieldName: 'file',
-      fileMimeType: input.mimeType || 'audio/m4a',
+      fileMimeType,
       // The native multipart writer refuses quotes, backslashes and line breaks here.
       fileName: (input.fileName || input.audioUri.split('/').pop() || 'recording.m4a').replace(
         /["\\\r\n]/g,
         '_',
       ),
       parameters,
-      headers: authHeaders(apiKey),
+      headers,
       routeSnapshot: input.routeSnapshot,
       recoveryAudioUri: input.audioUri,
       signal: input.signal,
     });
   } catch (error) {
+    if (gaplaServer) gaplaVaqt('javob-xato');
     throw normalizeTransportFailure(error, route.providerId);
   }
+  if (gaplaServer) gaplaVaqt('javob-keldi', { status: response.status });
   // Gapla: Cloudflare in front of the bridge cuts a request at ~100 s (524, or 504 from a proxy).
   // Lokal mode (RubaiSTT, ~3–4× slower than the audio) hits it on recordings over ~25–30 s.
   if (isGaplaBridge(endpoint) && (response.status === 524 || response.status === 504)) {

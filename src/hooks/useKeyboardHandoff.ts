@@ -20,6 +20,7 @@ import {
 } from '@/services/transcription/TranscriptionService';
 import { cleanupTranscript } from '@/lib/cleanupTranscript';
 import { transcribeAndCleanup } from '@/lib/transcribeAndCleanup';
+import { gaplaVaqt, gaplaVaqtBoshla } from '@/lib/gaplaVaqt';
 import { snapshotKeyboardTone, readKeyboardToneSnapshot } from '@/lib/keyboardToneSync';
 import {
   snapshotKeyboardAgentRequest,
@@ -292,6 +293,7 @@ export function useKeyboardHandoff() {
         return false;
       }
       markTiming('pending_transcript_written');
+      gaplaVaqt('klaviaturaga-berildi');
       setKeyboardStatus('ready');
       return true;
     };
@@ -714,8 +716,11 @@ export function useKeyboardHandoff() {
         jobId: stoppedJobId,
         fileSizeBytes,
         recordingDurationMs,
+        stoppedAtMs,
       }) => {
         const jobId = stoppedJobId?.trim() || readActiveJobId() || createKeyboardJobId();
+        gaplaVaqtBoshla(jobId, stoppedAtMs ?? Date.now());
+        gaplaVaqt('ilovaga-keldi');
         if (!isCurrentJob(jobId)) {
           if (__DEV__) {
             console.warn(`[keyboard-handoff] ignoring stale recording stopped jobId=${jobId}`);
@@ -910,6 +915,7 @@ export function useKeyboardHandoff() {
           markTiming('vad_start');
           const speechAnalysis = await analyzeSpeechActivity(fileUri, 'keyboard');
           markTiming('vad_done');
+          gaplaVaqt('ovoz-tekshirildi', { gap_yoq: speechAnalysis?.noSpeechLikely ? 1 : 0 });
           if (speechAnalysis) {
             Object.entries(serializeSpeechActivityMetrics(speechAnalysis)).forEach(
               ([key, value]) => {
@@ -940,6 +946,7 @@ export function useKeyboardHandoff() {
             audioFileName: fileName,
             audioMimeType: mimeType,
           });
+          gaplaVaqt('nusxa-olindi');
 
           let transcribeStartedAt = Date.now();
           let cleanupStartedAt = Date.now();
@@ -975,10 +982,16 @@ export function useKeyboardHandoff() {
                 cleanupStartedAt = Date.now();
                 setKeyboardStatus('cleaning');
                 markTiming('cleanup_start');
+                gaplaVaqt('tozalash-boshlandi');
               },
               onTranscribeDone: (result) => {
                 writeTranscriptionMetrics(result);
                 markTiming('transcribe_done');
+                gaplaVaqt('matn-keldi', {
+                  server_ms: result.processingMs,
+                  yuklash_ms: result.uploadMs,
+                  birga_tozalandi: result.fusedCleanup ? 1 : 0,
+                });
                 if (result.fusedCleanup) {
                   markTiming('cleanup_done');
                   markTiming('transcribe_cleanup_done');
@@ -1000,6 +1013,7 @@ export function useKeyboardHandoff() {
               onCleanupDone: (result) => {
                 if (!result.fusedCleanup) {
                   markTiming('cleanup_done');
+                  gaplaVaqt('tozalash-tugadi');
                   writeTimingMetric('cleanup_elapsed_ms', Date.now() - cleanupStartedAt);
                 }
                 if (__DEV__) {
