@@ -582,6 +582,122 @@ private final class ProcessingDotsView: UIView {
   }
 }
 
+/// Gapla (G57, analysis finding 3): the emoji page's scrolling grid. A collection view keeps only the cells on screen
+/// (about forty) and reuses them while scrolling, where the first page (G45) built a button for every one of the ~250
+/// emoji at once and kept them. Same look: `columns` equal cells a row, `cellHeight` tall, `rowSpacing` apart.
+private final class EmojiGridView: UIView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+  /// A tap on an emoji.
+  var onPick: ((String) -> Void)?
+
+  private final class Cell: UICollectionViewCell {
+    static let reuseIdentifier = "gapla-emoji"
+    let label = UILabel()
+
+    override init(frame: CGRect) {
+      super.init(frame: frame)
+      label.textAlignment = .center
+      label.translatesAutoresizingMaskIntoConstraints = false
+      contentView.addSubview(label)
+      NSLayoutConstraint.activate([
+        label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+        label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+        label.topAnchor.constraint(equalTo: contentView.topAnchor),
+        label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+      ])
+      isAccessibilityElement = true
+      accessibilityTraits = .button
+    }
+
+    required init?(coder: NSCoder) {
+      fatalError("init(coder:) has not been implemented")
+    }
+  }
+
+  private let emojis: [String]
+  private let columns: Int
+  private let cellHeight: CGFloat
+  private let emojiFont: UIFont
+  private let collectionView: UICollectionView
+  private var laidOutWidth: CGFloat = 0
+
+  init(emojis: [String], columns: Int, cellHeight: CGFloat, rowSpacing: CGFloat) {
+    self.emojis = emojis
+    self.columns = max(1, columns)
+    self.cellHeight = cellHeight
+    emojiFont = UIFont.systemFont(ofSize: min(32, cellHeight * 0.72))
+    let layout = UICollectionViewFlowLayout()
+    layout.scrollDirection = .vertical
+    layout.minimumInteritemSpacing = 0
+    layout.minimumLineSpacing = rowSpacing
+    layout.sectionInset = .zero
+    collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+    super.init(frame: .zero)
+
+    collectionView.backgroundColor = .clear
+    collectionView.showsVerticalScrollIndicator = false
+    collectionView.alwaysBounceVertical = true
+    // Only the visible cells: prefetching would build the next rows ahead of time.
+    collectionView.isPrefetchingEnabled = false
+    collectionView.register(Cell.self, forCellWithReuseIdentifier: Cell.reuseIdentifier)
+    collectionView.dataSource = self
+    collectionView.delegate = self
+    collectionView.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(collectionView)
+    NSLayoutConstraint.activate([
+      collectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      collectionView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      collectionView.topAnchor.constraint(equalTo: topAnchor),
+      collectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    // The cell width follows the grid's width; a new width (first layout, rotation) re-sizes the cells.
+    let width = collectionView.bounds.width
+    if abs(width - laidOutWidth) > 0.5 {
+      laidOutWidth = width
+      collectionView.collectionViewLayout.invalidateLayout()
+    }
+  }
+
+  func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+    emojis.count
+  }
+
+  func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+    let cell = collectionView.dequeueReusableCell(withReuseIdentifier: Cell.reuseIdentifier, for: indexPath)
+    if let emojiCell = cell as? Cell, emojis.indices.contains(indexPath.item) {
+      let emoji = emojis[indexPath.item]
+      emojiCell.label.font = emojiFont
+      emojiCell.label.text = emoji
+      emojiCell.accessibilityLabel = emoji
+    }
+    return cell
+  }
+
+  func collectionView(
+    _ collectionView: UICollectionView,
+    layout collectionViewLayout: UICollectionViewLayout,
+    sizeForItemAt indexPath: IndexPath
+  ) -> CGSize {
+    // Rounded down to the pixel so `columns` cells always fit a row.
+    let scale = max(1, collectionView.traitCollection.displayScale)
+    let width = floor(collectionView.bounds.width / CGFloat(columns) * scale) / scale
+    return CGSize(width: max(1, width), height: cellHeight)
+  }
+
+  func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+    collectionView.deselectItem(at: indexPath, animated: false)
+    guard emojis.indices.contains(indexPath.item) else { return }
+    onPick?(emojis[indexPath.item])
+  }
+}
+
 /// Apple's iOS 26 key preview, measured on the iPhone 17 Pro: a head 12pt wider than the
 /// key on each side with 12pt corners, its top 66pt above the key's, joined to the key by
 /// an S-curve, and no shadow. Extensions can't draw above their view, so a top-row head
@@ -1191,6 +1307,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var issueResetTimer: Timer?
   private var recordingPollTimer: Timer?
   private var waitForTranscriptTimer: Timer?
+  /// Gapla (G57): brings the keys back if the orb is still spinning this long after the stop.
+  private var processingKeysReturnTimer: Timer?
+  /// When the orb moved to processing (CACurrentMediaTime), so the stop tap's own double tap is not read as a
+  /// second tap.
+  private var processingOrbStartedAt: CFTimeInterval = 0
   private var isObservingHandoffNotifications = false
   private var didBuildKeyboard = false
   private var lastMetricsWidth: CGFloat = 0
@@ -1367,6 +1488,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
+    logMemory("viewDidAppear")
     // Without Full Access every write below is a no-op and every resume gate
     // reads a dead App Group. Today this method reaches refreshRecordButton()
     // anyway, but only because four separate resume gates each happen to fail
@@ -1427,9 +1549,18 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     stopHandoffObservers()
   }
 
+  /// Gapla (G57): one line in the device log with the extension's memory footprint — iOS ends a keyboard extension
+  /// near its 48–70 MB limit, and the system keyboard comes up instead («ochilmadi»). Release logger, notice level,
+  /// so it reaches the device log without a debug build; grep it for «gapla-xotira».
+  private func logMemory(_ moment: String) {
+    let footprint = String(format: "%.1f", RecordingOrbView.footprintMB())
+    KeyboardLog.ui.notice("gapla-xotira \(moment, privacy: .public) footprintMB=\(footprint, privacy: .public)")
+  }
+
   deinit {
     stopDeleteRepeating()
     issueResetTimer?.invalidate()
+    processingKeysReturnTimer?.invalidate()
     waitForTranscriptTimer?.invalidate()
     waitForAgentResultTimer?.invalidate()
     agentReviewNoteResetTimer?.invalidate()
@@ -1993,8 +2124,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       agentReviewTextView.bottomAnchor.constraint(equalTo: agentReviewRegenerateButton.topAnchor, constant: -10),
     ])
 
-    setupAgentReviewWakeLinks()
+    // G57 (analysis finding 3): the card's two wake-links (a SwiftUI hosting controller each,
+    // and four private-API host lookups for their URLs) are made the first time the card shows
+    // (refreshAgentReviewControls), not on every keyboard launch — Gapla rarely shows the card.
   }
+
+  private var didSetupAgentReviewWakeLinks = false
 
   /// The follow-up control is a labelled capsule ("🎙 Ask for changes") rather
   /// than a bare icon button — built with UIButton.Configuration like the record
@@ -2331,6 +2466,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// keys come back half-way through the shrink (restoreKeysAfterRecordingOrb). A second call
   /// while it is already ending does nothing.
   private func endRecordingOrb(success: Bool) {
+    cancelProcessingKeysReturn()
     guard recordingOrb.isActive else { return }
     recordingCanvas.isUserInteractionEnabled = false
     let finished: () -> Void = { [weak self] in
@@ -2363,6 +2499,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   /// The keyboard is closing: no orb animation, the keys back at once.
   private func resetRecordingOrbImmediately() {
+    cancelProcessingKeysReturn()
     guard recordingOrb.isShowing || dimmedKeysView.image != nil else { return }
     recordingOrb.reset()
     recordingCanvas.isUserInteractionEnabled = false
@@ -2385,10 +2522,59 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// or anywhere else on the keyboard stops the recording and sends it for text — a tap never
   /// cancels. Until then a tap beside the circle threw the recording away without a word
   /// (bilim/gapla-yozish-animatsiyasi-tanlov.md, «Joylashuv va boshqaruv»; Android 1.4.4 alike).
-  /// While the text is being made a tap does nothing; VoiceOver keeps an explicit cancel action.
+  /// VoiceOver keeps an explicit cancel action while recording.
+  /// G57: while the text is being made, a tap (from a second after the stop on, so the stop's own double tap does not
+  /// count) brings the keys back at once, as the 12 s timer would: the orb leaves, the pill keeps «Ishlanmoqda» with
+  /// its ✕ to cancel, and the text is still inserted when it lands. A tap never cancels outright, so a dictation is not
+  /// lost to a stray touch.
   private func handleRecordingOrbTap(insideCircle _: Bool) {
-    guard recordingOrb.isActive, recordingOrb.stage == .recording else { return }
-    handleStopRecordingTapped()
+    guard recordingOrb.isActive else { return }
+    switch recordingOrb.stage {
+    case .recording:
+      handleStopRecordingTapped()
+    case .processing:
+      guard CACurrentMediaTime() - processingOrbStartedAt >= 1.0 else { return }
+      returnKeysDuringProcessing(reason: "tap")
+    default:
+      break
+    }
+  }
+
+  // MARK: Gapla processing that takes long (G57)
+
+  /// After this long in processing the keys, the globe and the pill's ✕ come back while the wait goes on.
+  private static let processingKeysReturnDelay: TimeInterval = 12
+
+  /// Recording → processing, and from then on at most `processingKeysReturnDelay` of the orb alone (analysis
+  /// finding 1: a slow or dead app left nothing but a spinning orb for up to two minutes, five in Lokal mode).
+  private func moveOrbToProcessing() {
+    let wasRecording = recordingOrb.isActive && recordingOrb.stage == .recording
+    recordingOrb.process()
+    guard wasRecording else { return }
+    processingOrbStartedAt = CACurrentMediaTime()
+    processingKeysReturnTimer?.invalidate()
+    let timer = Timer(timeInterval: Self.processingKeysReturnDelay, repeats: false) { [weak self] _ in
+      self?.returnKeysDuringProcessing(reason: "timer")
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    processingKeysReturnTimer = timer
+  }
+
+  private func cancelProcessingKeysReturn() {
+    processingKeysReturnTimer?.invalidate()
+    processingKeysReturnTimer = nil
+  }
+
+  /// The orb leaves with its own shrink and the keys come back; the pill shows the processing step with its ✕. The
+  /// wait for the text keeps running (waitForTranscript, the shared status and the poll), so a late text is still
+  /// inserted, and the ✕ cancels it.
+  private func returnKeysDuringProcessing(reason: String) {
+    cancelProcessingKeysReturn()
+    guard recordingOrb.isActive, recordingOrb.stage == .processing else { return }
+    logRecordMarker("processing.keysReturn", extra: "reason=\(reason)")
+    endRecordingOrb(success: false)
+    let cleaning = KeyboardHandoffProvider.shared.transcriptionStatus() == "cleaning"
+    showLongRunningRecordState(title: cleaning ? "Tozalanmoqda" : "Ishlanmoqda")
   }
 
   /// The toolbar: the tone menu on the left, the dictation pill centred, the agent wand on
@@ -3042,6 +3228,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func refreshVisibleKeyboardMode() {
     keyPopup.hide()
+    tearDownEmojiPageIfLeft()
     buildPageIfNeeded()
     lettersRowsStack.isHidden = layoutMode != .letters
     numbersRowsStack.isHidden = layoutMode != .numbers
@@ -3070,14 +3257,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     case .numbers where numbersRowsStack.arrangedSubviews.isEmpty && builtForTablet:
       addTabletSymbolRows(Self.numberRows, pageKeyTitle: "#+=", to: numbersRowsStack)
     case .numbers where numbersRowsStack.arrangedSubviews.isEmpty:
-      addCharacterRow(Self.numberRows[0], to: numbersRowsStack)
-      addCharacterRow(Self.numberRows[1], to: numbersRowsStack)
+      addCharacterRow(Self.numberRows[0], to: numbersRowsStack, spansFullWidth: true)
+      addCharacterRow(Self.numberRows[1], to: numbersRowsStack, spansFullWidth: true)
       addPunctuationThirdRow(pageKeyTitle: "#+=", to: numbersRowsStack)
     case .symbols where symbolsRowsStack.arrangedSubviews.isEmpty && builtForTablet:
       addTabletSymbolRows(Self.symbolRows, pageKeyTitle: "123", to: symbolsRowsStack)
     case .symbols where symbolsRowsStack.arrangedSubviews.isEmpty:
-      addCharacterRow(Self.symbolRows[0], to: symbolsRowsStack)
-      addCharacterRow(Self.symbolRows[1], to: symbolsRowsStack)
+      addCharacterRow(Self.symbolRows[0], to: symbolsRowsStack, spansFullWidth: true)
+      addCharacterRow(Self.symbolRows[1], to: symbolsRowsStack, spansFullWidth: true)
       addPunctuationThirdRow(pageKeyTitle: "123", to: symbolsRowsStack)
     case .emoji where emojiRowsStack.arrangedSubviews.isEmpty:
       addEmojiPage(to: emojiRowsStack)
@@ -3126,17 +3313,17 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     pageHeight.priority = UILayoutPriority(999)
     pageHeight.isActive = true
 
-    let scroll = UIScrollView()
-    scroll.translatesAutoresizingMaskIntoConstraints = false
-    scroll.showsVerticalScrollIndicator = false
-    scroll.alwaysBounceVertical = true
-    container.addSubview(scroll)
-
-    let grid = UIStackView()
-    grid.axis = .vertical
-    grid.spacing = 2
+    // G57: a reusing grid (EmojiGridView) in place of a button per emoji; the page itself is
+    // taken down when the keyboard leaves it (tearDownEmojiPageIfLeft).
+    let recent = recentEmoji
+    let emojis = recent + Self.emojiCatalog.filter { !recent.contains($0) }
+    let cellHeight = max(36, (3 * metrics.keyHeight + 2 * metrics.rowGap - 6) / 4)
+    let grid = EmojiGridView(emojis: emojis, columns: Self.emojiColumns, cellHeight: cellHeight, rowSpacing: 2)
+    grid.onPick = { [weak self] emoji in
+      self?.handleEmojiPicked(emoji)
+    }
     grid.translatesAutoresizingMaskIntoConstraints = false
-    scroll.addSubview(grid)
+    container.addSubview(grid)
 
     let backspace = makeKeyButton(display: nil, imageSystemName: "delete.left", role: .utility)
     backspace.imageOffsetY = metrics.keycaps.edgeGlyphOffset
@@ -3148,48 +3335,37 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     container.addSubview(backspace)
 
     NSLayoutConstraint.activate([
-      scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-      scroll.topAnchor.constraint(equalTo: container.topAnchor),
-      scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-      scroll.trailingAnchor.constraint(equalTo: backspace.leadingAnchor, constant: -metrics.keyGap),
+      grid.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      grid.topAnchor.constraint(equalTo: container.topAnchor),
+      grid.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+      grid.trailingAnchor.constraint(equalTo: backspace.leadingAnchor, constant: -metrics.keyGap),
       backspace.trailingAnchor.constraint(equalTo: container.trailingAnchor),
       backspace.bottomAnchor.constraint(equalTo: container.bottomAnchor),
       backspace.heightAnchor.constraint(equalToConstant: metrics.keyHeight),
       widthOfKeys(backspace, keys: 1.5, gaps: 0),
-
-      grid.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
-      grid.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-      grid.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-      grid.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-      grid.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
     ])
 
-    let recent = recentEmoji
-    let emojis = recent + Self.emojiCatalog.filter { !recent.contains($0) }
-    let cellHeight = max(36, (3 * metrics.keyHeight + 2 * metrics.rowGap - 6) / 4)
-    stride(from: 0, to: emojis.count, by: Self.emojiColumns).forEach { start in
-      let row = UIStackView()
-      row.axis = .horizontal
-      row.distribution = .fillEqually
-      row.translatesAutoresizingMaskIntoConstraints = false
-      row.heightAnchor.constraint(equalToConstant: cellHeight).isActive = true
-      for index in start..<(start + Self.emojiColumns) {
-        let cell = UIButton(type: .custom)
-        if index < emojis.count {
-          cell.setTitle(emojis[index], for: .normal)
-          cell.titleLabel?.font = UIFont.systemFont(ofSize: min(32, cellHeight * 0.72))
-          cell.addTarget(self, action: #selector(handleEmojiTapped(_:)), for: .touchUpInside)
-        } else {
-          cell.isUserInteractionEnabled = false
-        }
-        row.addArrangedSubview(cell)
-      }
-      grid.addArrangedSubview(row)
+    // After the page has laid out its first cells.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+      self?.logMemory("emoji-ochildi")
     }
   }
 
-  @objc private func handleEmojiTapped(_ sender: UIButton) {
-    guard let emoji = sender.title(for: .normal) else { return }
+  /// G57: the emoji page is taken down as soon as the keyboard shows another page, so its views
+  /// don't stay in the extension's memory while hidden; it is built again (recently used first) on
+  /// the next open.
+  private func tearDownEmojiPageIfLeft() {
+    guard layoutMode != .emoji, !emojiRowsStack.arrangedSubviews.isEmpty else { return }
+    emojiRowsStack.arrangedSubviews.forEach { view in
+      emojiRowsStack.removeArrangedSubview(view)
+      view.removeFromSuperview()
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+      self?.logMemory("emoji-yopildi")
+    }
+  }
+
+  private func handleEmojiPicked(_ emoji: String) {
     playKeyClick()
     countTypedWordIfFinished()
     typeText(emoji)
@@ -3477,17 +3653,31 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   /// One row of equal character keys. Rows shorter than ten keys are centred, which
   /// gives the A row Apple's half-key indent.
+  /// Gapla (G57, owner 2026-11-13: the 123 and #+= keys «ikki yondan qisilib qolgan»): `spansFullWidth` stretches the
+  /// row from edge to edge, as on Apple's keyboard — 6.5pt margin, 6pt gaps, equal keys. The phone's 123 and #+= rows
+  /// hold ten keys; sized in the letters' eleven-key unit and centred, they left about 24pt empty at each side.
   private func addCharacterRow(
     _ keys: [(display: String, output: String)],
     to stack: UIStackView,
-    registersLetters: Bool = false
+    registersLetters: Bool = false,
+    spansFullWidth: Bool = false
   ) {
     let rowContainer = addRowContainer(to: stack)
     let rowStack = makeKeyStack(keys, registersLetters: registersLetters)
     rowContainer.addSubview(rowStack)
-    NSLayoutConstraint.activate([
-      rowStack.centerXAnchor.constraint(equalTo: rowContainer.centerXAnchor),
-      widthOfKeys(rowStack, keys: CGFloat(keys.count), gaps: CGFloat(keys.count - 1)),
+    let horizontal: [NSLayoutConstraint]
+    if spansFullWidth {
+      horizontal = [
+        rowStack.leadingAnchor.constraint(equalTo: rowContainer.leadingAnchor),
+        rowStack.trailingAnchor.constraint(equalTo: rowContainer.trailingAnchor),
+      ]
+    } else {
+      horizontal = [
+        rowStack.centerXAnchor.constraint(equalTo: rowContainer.centerXAnchor),
+        widthOfKeys(rowStack, keys: CGFloat(keys.count), gaps: CGFloat(keys.count - 1)),
+      ]
+    }
+    NSLayoutConstraint.activate(horizontal + [
       rowStack.topAnchor.constraint(equalTo: rowContainer.topAnchor),
       rowStack.bottomAnchor.constraint(equalTo: rowContainer.bottomAnchor),
     ])
@@ -3548,12 +3738,27 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     )
   }
 
+  /// Row 3 of the phone's 123 and #+= pages, as on Apple's keyboard (G57): the page key and delete at the edges in
+  /// Apple's shift width (`functionKeys` Apple keys), the five symbol keys sharing the rest equally, with ordinary key
+  /// gaps between all seven. Centred in seven letter widths, as before, they left ~31pt holes beside the edge keys.
   private func addPunctuationThirdRow(pageKeyTitle: String, to stack: UIStackView) {
-    addThirdRow(
-      leadingKey: makePageKey(title: pageKeyTitle),
-      keys: makeKeyStack(Self.punctuationRow, registersLetters: false),
-      to: stack
-    )
+    let rowContainer = addRowContainer(to: stack)
+    let pageKey = makePageKey(title: pageKeyTitle)
+    let keys = makeKeyStack(Self.punctuationRow, registersLetters: false)
+    let backspace = makeBackspaceKey()
+    for item in [pageKey, keys, backspace] {
+      rowContainer.addSubview(item)
+      item.topAnchor.constraint(equalTo: rowContainer.topAnchor).isActive = true
+      item.bottomAnchor.constraint(equalTo: rowContainer.bottomAnchor).isActive = true
+    }
+    NSLayoutConstraint.activate([
+      pageKey.leadingAnchor.constraint(equalTo: rowContainer.leadingAnchor),
+      widthOfAppleKeys(pageKey, keys: metrics.functionKeys),
+      backspace.trailingAnchor.constraint(equalTo: rowContainer.trailingAnchor),
+      widthOfAppleKeys(backspace, keys: metrics.functionKeys),
+      keys.leadingAnchor.constraint(equalTo: pageKey.trailingAnchor, constant: metrics.keyGap),
+      keys.trailingAnchor.constraint(equalTo: backspace.leadingAnchor, constant: -metrics.keyGap),
+    ])
   }
 
   private func makeShiftKey() -> KeyButton {
@@ -3597,8 +3802,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     return returnKey
   }
 
-  /// Row 3 of every page: a function key at each edge and seven letter widths of keys
-  /// centred between them, so Z sits under S and the five symbol keys span Z…M.
+  /// Row 3 of the phone's letters page: a function key at each edge and the letter keys
+  /// centred between them (the 123 and #+= pages build theirs in addPunctuationThirdRow).
   private func addThirdRow(
     leadingKey: KeyButton,
     keys: UIStackView,
@@ -4065,8 +4270,18 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func startRecordingPoll() {
     stopRecordingPoll()
+    // G57 (analysis finding 6): with nothing recording, starting or awaited, only every fourth
+    // tick (~0.5 s) reads the App Group — it then only watches for a recording the app started
+    // itself. Starting and recording keep every 0.12 s tick (the start checks count ticks).
+    var idleTicks = 0
     recordingPollTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
-      self?.pollRecordingState()
+      guard let self else { return }
+      if self.isRecordingPollIdle {
+        idleTicks += 1
+        if idleTicks < 4 { return }
+      }
+      idleTicks = 0
+      self.pollRecordingState()
     }
     if let recordingPollTimer {
       RunLoop.main.add(recordingPollTimer, forMode: .common)
@@ -4076,6 +4291,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func stopRecordingPoll() {
     recordingPollTimer?.invalidate()
     recordingPollTimer = nil
+  }
+
+  private var isRecordingPollIdle: Bool {
+    !isDarwinStartPending && !isRemoteRecordingActive && !recordingOrb.isShowing && waitForTranscriptTimer == nil
   }
 
   private func startHandoffObservers() {
@@ -4859,6 +5078,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func enterRecordingMode() {
     issueResetTimer?.invalidate()
     issueResetTimer = nil
+    // G57: the keys can come back while an earlier text is still awaited; a new recording
+    // supersedes it, and that wait must not end the new recording's orb with its own failure.
+    waitForTranscriptTimer?.invalidate()
+    waitForTranscriptTimer = nil
 
     dictationLinkHosting?.view.isUserInteractionEnabled = false
     isDarwinStartPending = false
@@ -4919,8 +5142,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     }
 
     // Gapla (G47): the orb stays up, spinning, until the text lands (a stop the app made
-    // itself reaches here still recording, so it is moved on to processing).
-    recordingOrb.process()
+    // itself reaches here still recording, so it is moved on to processing). G57: for at most
+    // 12 s; then the keys come back while the wait goes on.
+    moveOrbToProcessing()
     showLongRunningRecordState(title: "Ishlanmoqda")
 
     logRecordMarker("exitRecordingMode")
@@ -4939,13 +5163,21 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     recordButton.removeTarget(self, action: #selector(handleStopRecordingTapped), for: .touchUpInside)
 
     // Gapla (G47): the orb settles and spins until the text arrives.
-    recordingOrb.process()
+    moveOrbToProcessing()
 
-    showTransientRecordState(
+    // G57 (analysis finding 2): no reset timer here. The old 5 s transient state ran
+    // refreshRecordButton, which cleared didRequestStopForCurrentSession and
+    // isAgentRecordingActive while the app was still stopping; a stop acknowledged after
+    // that read as unexpected and showed «Yozish uzildi». This state ends when the session
+    // really ends — the poll sees the recording stop (exitRecordingMode), a failure status, or
+    // a stale heartbeat — and the keys come back after 12 s anyway (moveOrbToProcessing).
+    issueResetTimer?.invalidate()
+    issueResetTimer = nil
+    dictationLinkHosting?.view.isUserInteractionEnabled = false
+    applyRecordButtonStyle(
       title: "To'xtatilmoqda",
       systemImage: "ellipsis",
-      background: isAgentRecordingActive ? Palette.cleanupAccent : Palette.accent,
-      duration: 5.0
+      solidBackground: isAgentRecordingActive ? Palette.cleanupAccent : Palette.accent
     )
     logRecordMarker("handleStopRecordingTapped.afterRequest")
   }
@@ -4975,6 +5207,15 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// remember the job so a late transcript can't slip in, and return to idle.
   @objc private func handleProcessingCancelTapped() {
     let provider = KeyboardHandoffProvider.shared
+
+    // G57: the keys (and this ✕) come back 12 s after a stop even when the app has not yet
+    // confirmed it. The recording is then still live in the shared state, so cancel it as a
+    // recording: the poll sees it end and exitRecordingMode returns to idle without «Yozish uzildi».
+    if isRemoteRecordingActive {
+      logRecordMarker("handleProcessingCancelTapped.stillRecording")
+      handleCancelRecordingTapped()
+      return
+    }
 
     // During agent generation the same X aborts the compose. The app's currency
     // check / cancel flag drops any result for this job; we clear the local
@@ -5024,6 +5265,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     cancelledProcessingJobId = nil
     isRemoteRecordingActive = false
     didRequestStopForCurrentSession = false
+    // G57: a text still awaited from the previous recording (the keys came back during its
+    // processing) is superseded by this one; its late arrival is dropped by job id.
+    waitForTranscriptTimer?.invalidate()
+    waitForTranscriptTimer = nil
     logRecordMarker("handleDarwinRecordTapped.beforeRequest")
     KeyboardHandoffProvider.shared.requestStart()
     isDarwinStartPending = true
@@ -5063,6 +5308,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     showIssueState(title: hostIsOwnApp ? "Qayta urining" : "Ilovani oching")
     logRecordMarker("handleDarwinStartFallback")
   }
+
+  /// G57: how long the app's heartbeat (written every 1 s while its session runs) may stand still while a text is
+  /// awaited before the wait ends. 20 s, not less: a briefly suspended app must not be called dead — the keys
+  /// already come back after 12 s (processingKeysReturnDelay), so the user is never stuck meanwhile.
+  private static let appSilenceLimitMs: Double = 20_000
 
   private func waitForTranscript() {
     var attempts = 0
@@ -5105,6 +5355,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
         self.waitForTranscriptTimer = nil
         self.endRecordingOrb(success: false)
         self.refreshRecordButton()
+      } else if KeyboardHandoffProvider.shared.hasAppStoppedResponding(staleMs: Self.appSilenceLimitMs) {
+        // G57 (analysis finding 1): the app's heartbeat has stood still for over 20 s — it was
+        // killed (memory, force quit) or suspended, and no text is coming. Say so now instead
+        // of spinning until the two- or five-minute timeout.
+        self.logRecordMarker("waitForTranscript.appSilent", extra: "attempts=\(attempts)")
+        self.surfaceHandoffFailure(title: "Gapla ilovasi javob bermadi")
       } else if attempts > (KeyboardHandoffProvider.shared.currentGaplaMode() == "lokal" ? 400 : 160) {
         // Gapla: Lokal runs RubaiSTT on the server (~22 s for a short clip, against 1–2 s for
         // the other modes), so the keyboard waits 5 minutes instead of 2 before giving up.
@@ -5366,6 +5622,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// regenerate/follow-up controls on app-heartbeat freshness: fresh ⇒ the button
   /// handlers run; stale ⇒ the "Open OpenWhispr" wake-link overlay takes the tap.
   private func refreshAgentReviewControls() {
+    if !didSetupAgentReviewWakeLinks {
+      didSetupAgentReviewWakeLinks = true
+      setupAgentReviewWakeLinks()
+    }
     let count = agentReviewVersions.count
     let showPager = count > 1
     agentReviewPagerPrevButton.isHidden = !showPager
@@ -5586,9 +5846,10 @@ private struct KeyboardHandoffProvider {
     return "\(short)+\(build)"
   }()
 
-  private var appGroupId: String {
-    "group.\(Self.resolvedContainingAppBundleID)"
-  }
+  /// Gapla (G57, analysis finding 6): one App Group store for every read and write here, made
+  /// once, instead of a new UserDefaults object on each call (the 0.12 s poll alone made several a
+  /// second). Same suite, same data: other processes' writes still show up through it.
+  private static let sharedDefaults = UserDefaults(suiteName: "group.\(resolvedContainingAppBundleID)")
   private let pendingTranscriptKey = "keyboard_pending_transcript"
   private let pendingTranscriptJobIdKey = "keyboard_pending_transcript_job_id"
   private let orphanedRawTranscriptKey = "keyboard_orphaned_raw_transcript"
@@ -5679,7 +5940,7 @@ private struct KeyboardHandoffProvider {
   }()
 
   func consumePendingTranscript() -> String? {
-    guard let sharedDefaults = UserDefaults(suiteName: appGroupId) else {
+    guard let sharedDefaults = Self.sharedDefaults else {
       KeyboardLog.storage.error("Unable to open app-group defaults for keyboard handoff.")
       KeyboardLog.echo("Unable to open app-group defaults for keyboard handoff.")
       return nil
@@ -5713,7 +5974,7 @@ private struct KeyboardHandoffProvider {
   }
 
   func currentTone() -> String {
-    guard let defaults = UserDefaults(suiteName: appGroupId),
+    guard let defaults = Self.sharedDefaults,
           let raw = defaults.string(forKey: dictationToneKey),
           Self.toneValues.contains(raw) else {
       return "default"
@@ -5723,7 +5984,7 @@ private struct KeyboardHandoffProvider {
 
   func setTone(_ tone: String) {
     guard Self.toneValues.contains(tone),
-          let defaults = UserDefaults(suiteName: appGroupId) else { return }
+          let defaults = Self.sharedDefaults else { return }
     defaults.set(tone, forKey: dictationToneKey)
     defaults.synchronize()
   }
@@ -5735,7 +5996,7 @@ private struct KeyboardHandoffProvider {
   static let gaplaDefaultMode = "orta"
 
   func currentGaplaMode() -> String {
-    guard let defaults = UserDefaults(suiteName: appGroupId),
+    guard let defaults = Self.sharedDefaults,
           let raw = defaults.string(forKey: gaplaModeKey),
           Self.gaplaModeValues.contains(raw) else {
       return Self.gaplaDefaultMode
@@ -5745,13 +6006,13 @@ private struct KeyboardHandoffProvider {
 
   func setGaplaMode(_ mode: String) {
     guard Self.gaplaModeValues.contains(mode),
-          let defaults = UserDefaults(suiteName: appGroupId) else { return }
+          let defaults = Self.sharedDefaults else { return }
     defaults.set(mode, forKey: gaplaModeKey)
     defaults.synchronize()
   }
 
   func isToneApplicable() -> Bool {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return false }
+    guard let defaults = Self.sharedDefaults else { return false }
     return defaults.string(forKey: toneApplicableKey) != "0"
   }
 
@@ -5759,24 +6020,24 @@ private struct KeyboardHandoffProvider {
 
   /// The dictation agent is off entirely unless the app has mirrored enabled=1.
   func isAgentEnabled() -> Bool {
-    UserDefaults(suiteName: appGroupId)?.string(forKey: agentEnabledKey) == "1"
+    Self.sharedDefaults?.string(forKey: agentEnabledKey) == "1"
   }
 
   /// Applicable = the voice assistant can run: an account for Cloud, or its own
   /// provider. Not applicable ⇒ the entry button is dimmed and points the user at
   /// the app, mirroring tone.
   func isAgentApplicable() -> Bool {
-    UserDefaults(suiteName: appGroupId)?.string(forKey: agentApplicableKey) == "1"
+    Self.sharedDefaults?.string(forKey: agentApplicableKey) == "1"
   }
 
   /// Only when the user has opted in do we share the surrounding field text.
   func agentSharesContext() -> Bool {
-    UserDefaults(suiteName: appGroupId)?.string(forKey: agentShareContextKey) == "1"
+    Self.sharedDefaults?.string(forKey: agentShareContextKey) == "1"
   }
 
   /// Display name shown in the recording/review headers ("Tell {name}…").
   func agentName() -> String {
-    guard let raw = UserDefaults(suiteName: appGroupId)?.string(forKey: agentNameKey) else {
+    guard let raw = Self.sharedDefaults?.string(forKey: agentNameKey) else {
       return "Agent"
     }
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5787,7 +6048,7 @@ private struct KeyboardHandoffProvider {
   /// what to dictate (onboarding's voice assistant step). A deadline, so a step the app never left
   /// (killed mid-onboarding) stops hiding them on its own.
   func agentHintsHidden() -> Bool {
-    guard let raw = UserDefaults(suiteName: appGroupId)?.string(forKey: agentHintsHiddenUntilMsKey),
+    guard let raw = Self.sharedDefaults?.string(forKey: agentHintsHiddenUntilMsKey),
           let untilMs = Double(raw) else { return false }
     return Date().timeIntervalSince1970 * 1000 < untilMs
   }
@@ -5796,10 +6057,28 @@ private struct KeyboardHandoffProvider {
   /// used for recording-active). While the agent is generating, a stale/missing
   /// heartbeat means the app process died mid-job and no result is coming.
   func isAppHeartbeatFresh() -> Bool {
-    guard let defaults = UserDefaults(suiteName: appGroupId),
+    guard let defaults = Self.sharedDefaults,
           let raw = defaults.string(forKey: backgroundSessionHeartbeatKey),
           let heartbeatMs = Double(raw) else { return false }
     return Date().timeIntervalSince1970 * 1000 - heartbeatMs <= 5_000
+  }
+
+  /// Gapla (G57): while the keyboard waits for a transcript — true when the app's keep-alive
+  /// heartbeat (written every 1 s) has stood still for more than `staleMs` and the app is not in
+  /// the foreground either (its own 2 s stamp): it was killed or suspended, and no text is coming.
+  /// A missing heartbeat does not count: the app removes it itself when its microphone stops
+  /// (stopRecording with the engine down, an interruption) and may still be finishing the text.
+  func hasAppStoppedResponding(staleMs: Double) -> Bool {
+    guard let defaults = Self.sharedDefaults else { return false }
+    let nowMs = Date().timeIntervalSince1970 * 1000
+    if let raw = defaults.string(forKey: "containing_app_foreground_at_ms"),
+       let foregroundAtMs = Double(raw),
+       nowMs - foregroundAtMs <= staleMs {
+      return false
+    }
+    guard let raw = defaults.string(forKey: backgroundSessionHeartbeatKey),
+          let heartbeatMs = Double(raw) else { return false }
+    return nowMs - heartbeatMs > staleMs
   }
 
   /// Writes the one-shot compose request the app consumes at recording start.
@@ -5810,7 +6089,7 @@ private struct KeyboardHandoffProvider {
     contextBefore: String?,
     contextAfter: String?
   ) {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     var payload: [String: Any] = [
       "kind": "compose",
       "requestedAtMs": Int(Date().timeIntervalSince1970 * 1000),
@@ -5826,7 +6105,7 @@ private struct KeyboardHandoffProvider {
   }
 
   func clearAgentRequest() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.removeObject(forKey: agentRequestKey)
     defaults.synchronize()
   }
@@ -5835,7 +6114,7 @@ private struct KeyboardHandoffProvider {
   /// the app reuses `sessionId` so the reply threads onto the same session. No
   /// selectedText/context is re-captured — the follow-up refines the last reply.
   func writeAgentFollowUpRequest(sessionId: String) {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     let payload: [String: Any] = [
       "kind": "follow_up",
       "sessionId": sessionId,
@@ -5855,7 +6134,7 @@ private struct KeyboardHandoffProvider {
   @discardableResult
   func writeAgentRegenerateAction(sessionId: String) -> Int64 {
     let atMs = Int64(Date().timeIntervalSince1970 * 1000)
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return atMs }
+    guard let defaults = Self.sharedDefaults else { return atMs }
     let requestId = "\(atMs)-\(UUID().uuidString)"
     let payload: [String: Any] = [
       "type": "regenerate",
@@ -5877,7 +6156,7 @@ private struct KeyboardHandoffProvider {
   /// recording. Lets the keyboard recover "this recording is an agent one" after
   /// it was rebuilt mid-recording (a common jetsam case on the handoff path).
   func hasAgentJobForCurrentRecording() -> Bool {
-    guard let defaults = UserDefaults(suiteName: appGroupId),
+    guard let defaults = Self.sharedDefaults,
           let activeJobId = defaults.string(forKey: recordingJobIdKey),
           !activeJobId.isEmpty,
           let raw = defaults.string(forKey: agentJobKey),
@@ -5893,7 +6172,7 @@ private struct KeyboardHandoffProvider {
   /// JSON, or when the result's job is superseded by a newer recording — reusing
   /// the same timestamp-prefix staleness rule as pending transcripts.
   func readAgentResult() -> AgentResult? {
-    guard let defaults = UserDefaults(suiteName: appGroupId),
+    guard let defaults = Self.sharedDefaults,
           let raw = defaults.string(forKey: agentResultKey),
           let data = raw.data(using: .utf8),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -5926,7 +6205,7 @@ private struct KeyboardHandoffProvider {
   }
 
   func clearAgentResult() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.removeObject(forKey: agentResultKey)
     defaults.synchronize()
   }
@@ -5952,14 +6231,14 @@ private struct KeyboardHandoffProvider {
   /// Stamps the App Group with the moment the keyboard came on screen so the
   /// main app can detect a successful keyboard switch during onboarding.
   func markShown() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.set(String(Int(Date().timeIntervalSince1970 * 1000)), forKey: shownAtMsKey)
     defaults.set(Self.bundleVersionIdentity, forKey: shownAtVersionKey)
     defaults.synchronize()
   }
 
   func isRecordingActive() -> Bool {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return false }
+    guard let defaults = Self.sharedDefaults else { return false }
     guard defaults.string(forKey: recordingActiveKey) == "1" else { return false }
 
     // The host app writes a heartbeat every 1s while alive. If it's missing
@@ -5981,18 +6260,18 @@ private struct KeyboardHandoffProvider {
   }
 
   func forceClearActiveFlag() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.set("0", forKey: recordingActiveKey)
   }
 
   func clearBackgroundSessionReady() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.set("0", forKey: backgroundSessionReadyKey)
     defaults.synchronize()
   }
 
   func currentAudioLevel() -> Float {
-    guard let defaults = UserDefaults(suiteName: appGroupId),
+    guard let defaults = Self.sharedDefaults,
           let raw = defaults.string(forKey: audioLevelKey),
           let value = Float(raw) else { return 0 }
     return min(max(value, 0), 1)
@@ -6000,11 +6279,11 @@ private struct KeyboardHandoffProvider {
 
   /// Gapla: the app's «Animatsiya sinovi» switch (PreferencesScreen) is on.
   func isOrbTestVoiceEnabled() -> Bool {
-    UserDefaults(suiteName: appGroupId)?.string(forKey: orbTestVoiceKey) == "1"
+    Self.sharedDefaults?.string(forKey: orbTestVoiceKey) == "1"
   }
 
   func requestStop() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.set("1", forKey: stopRequestedKey)
     defaults.set(String(Int(Date().timeIntervalSince1970 * 1000)), forKey: stopRequestedAtMsKey)
     defaults.set("transcribing", forKey: transcriptionStatusKey)
@@ -6020,21 +6299,21 @@ private struct KeyboardHandoffProvider {
   }
 
   func requestCancel() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.set("1", forKey: cancelRequestedKey)
     requestStop()
     KeyboardLog.echo("MARKER provider.requestCancel")
   }
 
   func currentRecordingJobId() -> String? {
-    UserDefaults(suiteName: appGroupId)?.string(forKey: recordingJobIdKey)
+    Self.sharedDefaults?.string(forKey: recordingJobIdKey)
   }
 
   /// Cancel during the transcription phase (recording already stopped). Raises
   /// the cancel flag the app polls at its checkpoints and clears any transcript
   /// already written for this job, leaving the status idle.
   func cancelProcessingJob() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.set("1", forKey: cancelRequestedKey)
     defaults.removeObject(forKey: pendingTranscriptKey)
     defaults.removeObject(forKey: pendingTranscriptJobIdKey)
@@ -6049,7 +6328,7 @@ private struct KeyboardHandoffProvider {
   /// Drops a pending transcript that belongs to a cancelled job. Returns true
   /// when it discarded one, so the caller knows not to insert anything.
   func discardPendingTranscriptIfMatches(jobId: String) -> Bool {
-    guard let defaults = UserDefaults(suiteName: appGroupId),
+    guard let defaults = Self.sharedDefaults,
           defaults.string(forKey: pendingTranscriptKey) != nil,
           defaults.string(forKey: pendingTranscriptJobIdKey) == jobId else { return false }
     defaults.removeObject(forKey: pendingTranscriptKey)
@@ -6076,15 +6355,31 @@ private struct KeyboardHandoffProvider {
     return host == appBundle || host.hasPrefix(appBundle + ".")
   }
 
+  /// Gapla (G57, analysis finding 7): a private-API read that gives nil instead of raising when a
+  /// later iOS renames it. value(forKey:) on an unknown key raises NSUnknownKeyException — a crash
+  /// on the keyboard's first appearance — so the key is read only when the object answers to it as
+  /// a method or holds it as an instance variable (the two places KVC reads from).
+  private static func privateValue(of object: NSObject?, key: String) -> Any? {
+    guard let object else { return nil }
+    if object.responds(to: NSSelectorFromString(key)) {
+      return object.value(forKey: key)
+    }
+    if let objectClass = object_getClass(object),
+       class_getInstanceVariable(objectClass, key) != nil || class_getInstanceVariable(objectClass, "_" + key) != nil {
+      return object.value(forKey: key)
+    }
+    return nil
+  }
+
   func detectHostBundleID(from controller: UIInputViewController) -> String? {
-    if let bundleId = controller.parent?.value(forKey: "_hostBundleID") as? String,
+    if let bundleId = Self.privateValue(of: controller.parent, key: "_hostBundleID") as? String,
        bundleId != "<null>", !bundleId.isEmpty {
       KeyboardLog.echo("Host detected via KVC: \(bundleId)")
       return bundleId
     }
     KeyboardLog.echo("KVC host detection failed, parent=\(controller.parent != nil ? "present" : "nil")")
 
-    guard let pid = controller.parent?.value(forKey: "_hostPID") else {
+    guard let pid = Self.privateValue(of: controller.parent, key: "_hostPID") else {
       KeyboardLog.echo("XPC host detection failed: no _hostPID")
       return nil
     }
@@ -6094,14 +6389,22 @@ private struct KeyboardHandoffProvider {
           pkService.responds(to: selector),
           let serverInis = pkService.perform(selector)?.takeUnretainedValue() as? NSObjectProtocol
     else { return nil }
-    let personalities = serverInis.perform(NSSelectorFromString("personalities"))?.takeUnretainedValue()
+    // G57: every private selector below is checked first; perform(_:) on one an object
+    // doesn't answer to raises (unrecognized selector) and would end the extension.
+    let personalitiesSelector = NSSelectorFromString("personalities")
+    let connectionSelector = NSSelectorFromString("connection")
+    let xpcConnectionSelector = NSSelectorFromString("_xpcConnection")
+    guard serverInis.responds(to: personalitiesSelector) else { return nil }
+    let personalities = serverInis.perform(personalitiesSelector)?.takeUnretainedValue()
     let bundleId = Bundle.main.bundleIdentifier ?? ""
     guard let dict = personalities as? NSDictionary,
           let infos = dict[bundleId] as? NSDictionary,
-          let info = infos[pid] as? AnyObject,
-          let con = info.perform(NSSelectorFromString("connection"))?.takeUnretainedValue() as? NSObjectProtocol
+          let info = infos[pid] as? NSObjectProtocol,
+          info.responds(to: connectionSelector),
+          let con = info.perform(connectionSelector)?.takeUnretainedValue() as? NSObjectProtocol,
+          con.responds(to: xpcConnectionSelector)
     else { return nil }
-    let xpcCon = con.perform(NSSelectorFromString("_xpcConnection"))?.takeUnretainedValue()
+    let xpcCon = con.perform(xpcConnectionSelector)?.takeUnretainedValue()
     guard let xpcCon = xpcCon else { return nil }
     guard let handle = dlopen("/usr/lib/libc.dylib", RTLD_NOW) else { return nil }
     defer { dlclose(handle) }
@@ -6118,7 +6421,7 @@ private struct KeyboardHandoffProvider {
   }
 
   func storeHostReturnInfo(from controller: UIInputViewController) {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     if let scheme = hostUrlScheme(from: controller) {
       defaults.set(scheme, forKey: "keyboard_return_url")
       KeyboardLog.echo("Stored return URL: \(scheme)")
@@ -6132,7 +6435,7 @@ private struct KeyboardHandoffProvider {
   }
 
   func isBackgroundSessionReady() -> Bool {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return false }
+    guard let defaults = Self.sharedDefaults else { return false }
     guard defaults.string(forKey: backgroundSessionReadyKey) == "1" else { return false }
 
     guard let rawHeartbeat = defaults.string(forKey: backgroundSessionHeartbeatKey),
@@ -6156,7 +6459,7 @@ private struct KeyboardHandoffProvider {
   /// fails the freshness check, so another host app never reads a false positive.
   /// Private-API host bundle-id detection is unreliable, so this is the signal.
   func isContainingAppForeground() -> Bool {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return false }
+    guard let defaults = Self.sharedDefaults else { return false }
     guard let raw = defaults.string(forKey: "containing_app_foreground_at_ms"),
           let atMs = Double(raw) else { return false }
     let ageMs = Date().timeIntervalSince1970 * 1000 - atMs
@@ -6164,7 +6467,7 @@ private struct KeyboardHandoffProvider {
   }
 
   func requestStart() {
-    if let defaults = UserDefaults(suiteName: appGroupId) {
+    if let defaults = Self.sharedDefaults {
       let jobId = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString)"
       defaults.set("0", forKey: stopRequestedKey)
       defaults.removeObject(forKey: stopRequestedAtMsKey)
@@ -6200,7 +6503,7 @@ private struct KeyboardHandoffProvider {
   }
 
   func recordingStateSnapshot() -> (active: String, ready: String, stopRequested: String, warmMic: String) {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else {
+    guard let defaults = Self.sharedDefaults else {
       return ("?", "?", "?", "?")
     }
     return (
@@ -6212,27 +6515,27 @@ private struct KeyboardHandoffProvider {
   }
 
   func transcriptionStatus() -> String? {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return nil }
+    guard let defaults = Self.sharedDefaults else { return nil }
     return defaults.string(forKey: transcriptionStatusKey)
   }
 
   /// The error detail riding alongside an error status: `usage_limit`,
   /// `session_expired`, or a free-form message.
   func transcriptionError() -> String? {
-    UserDefaults(suiteName: appGroupId)?.string(forKey: transcriptionErrorKey)
+    Self.sharedDefaults?.string(forKey: transcriptionErrorKey)
   }
 
   /// Milliseconds since the shared transcription status last changed, or nil
   /// when no writer has stamped it (e.g. right after the app reset state).
   func transcriptionStatusAgeMs() -> Int? {
-    guard let defaults = UserDefaults(suiteName: appGroupId),
+    guard let defaults = Self.sharedDefaults,
           let raw = defaults.string(forKey: transcriptionStatusUpdatedAtMsKey),
           let updatedAtMs = Double(raw) else { return nil }
     return Int(Date().timeIntervalSince1970 * 1000 - updatedAtMs)
   }
 
   func clearTranscriptionStatus() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.set("idle", forKey: transcriptionStatusKey)
     defaults.removeObject(forKey: transcriptionErrorKey)
   }
@@ -6240,7 +6543,7 @@ private struct KeyboardHandoffProvider {
   /// Stamped on every Activate tap so the main app can recover the handoff if
   /// the deep link itself never arrives (cold-launch getInitialURL race).
   func markHandoffIntent() {
-    guard let defaults = UserDefaults(suiteName: appGroupId) else { return }
+    guard let defaults = Self.sharedDefaults else { return }
     defaults.set(String(Int(Date().timeIntervalSince1970 * 1000)), forKey: handoffIntentAtMsKey)
     defaults.synchronize()
     KeyboardLog.echo("MARKER provider.markHandoffIntent")

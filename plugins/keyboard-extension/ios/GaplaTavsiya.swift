@@ -1,5 +1,16 @@
 import Foundation
 import UIKit
+import os
+
+/// Gapla (G57, analysis finding 4): the list's cost in the extension's memory, in the device log — the same category and
+/// «gapla-xotira» prefix as the keyboard's own lines (KeyboardViewController.logMemory), so one grep finds them all.
+private let tavsiyaMemoryLog = Logger(subsystem: "com.gizmolabs.openwhispr.keyboard", category: "UI")
+
+private func logTavsiyaMemory(_ moment: String, words: Int? = nil) {
+  let footprint = String(format: "%.1f", RecordingOrbView.footprintMB())
+  let count = words.map { " sozlar=\($0)" } ?? ""
+  tavsiyaMemoryLog.notice("gapla-xotira \(moment, privacy: .public) footprintMB=\(footprint, privacy: .public)\(count, privacy: .public)")
+}
 
 // Gapla (G41, G55): word suggestions on the iPhone and iPad keyboard. Owner, 2026-11-11 and 2026-11-12:
 // [so'zlari: bilim/gapla-goyalar-royxati.md, G41 va G55]. The words and word pairs he writes
@@ -77,6 +88,10 @@ final class GaplaTavsiya {
   /// What is asked for. The plan's safe size for a keyboard extension is 20–30 thousand words in 1–2 MB.
   private static let wordsWanted = 20_000
   private static let pairsWanted = 20_000
+  /// G57: the most the keyboard keeps from any list, whatever the server or a saved file holds — the extension's memory
+  /// limit is near 48–70 MB and the list must stay a small part of it.
+  private static let maxListWords = 20_000
+  private static let maxListPairs = 40_000
   /// Every dictation changes the list on the server, so it is not worth fetching more often (contract rule 7).
   private static let syncInterval: TimeInterval = 6 * 60 * 60
   /// A failed or refused fetch is not tried again before this.
@@ -379,14 +394,19 @@ final class GaplaTavsiya {
     guard !loading else { return }
     guard let url = folder?.appendingPathComponent(Self.listFile) else { return }
     loading = true
+    logTavsiyaMemory("lugat-oldin")
     ioQueue.async {
-      let parsed = (try? Data(contentsOf: url)).flatMap { Self.parse($0) }
+      // G57: the file's bytes and the parser's temporary objects go as soon as the list is built.
+      let parsed: Parsed? = autoreleasepool {
+        (try? Data(contentsOf: url)).flatMap { Self.parse($0) }
+      }
       DispatchQueue.main.async {
         self.loading = false
         if self.model == nil, case .list(let model)? = parsed {
           self.model = model
           self.onChange?()
         }
+        logTavsiyaMemory("lugat-keyin", words: self.model?.entries.count)
         self.syncIfDue()
       }
     }
@@ -425,7 +445,8 @@ final class GaplaTavsiya {
       }
       let url = self.folder?.appendingPathComponent(Self.listFile)
       self.ioQueue.async {
-        let parsed = Self.parse(data)
+        // G57: the parser's temporary objects go as soon as the list is built.
+        let parsed: Parsed? = autoreleasepool { Self.parse(data) }
         if case .list(_)? = parsed, let url {
           try? data.write(to: url, options: .atomic)
         }
@@ -441,6 +462,7 @@ final class GaplaTavsiya {
             self.saveQueue()
             self.markSynced()
             self.onChange?()
+            logTavsiyaMemory("lugat-yangi", words: model.entries.count)
           case nil:
             break
           }
@@ -463,8 +485,10 @@ final class GaplaTavsiya {
     var entries: [Entry] = []
     var seen = Set<String>()
     if let rows = root["sozlar"] as? [Any] {
-      entries.reserveCapacity(rows.count)
+      entries.reserveCapacity(min(rows.count, maxListWords))
       for item in rows {
+        // G57: never more than maxListWords, whatever the list holds.
+        if entries.count >= maxListWords { break }
         guard let row = item as? [Any], row.count >= 2, let raw = row[0] as? String else { continue }
         let word = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !word.isEmpty, !word.contains(" ") else { continue }
@@ -482,7 +506,10 @@ final class GaplaTavsiya {
 
     var next: [String: [Entry]] = [:]
     if let rows = root["juftlar"] as? [Any] {
+      var pairCount = 0
       for item in rows {
+        // G57: never more than maxListPairs, whatever the list holds.
+        if pairCount >= maxListPairs { break }
         guard let row = item as? [Any], row.count >= 3,
               let rawFirst = row[0] as? String, let rawSecond = row[1] as? String
         else { continue }
@@ -491,6 +518,7 @@ final class GaplaTavsiya {
         guard !first.isEmpty, !second.isEmpty, !first.contains(" "), !second.contains(" ") else { continue }
         let score = (row[2] as? NSNumber)?.floatValue ?? 1
         next[first, default: []].append(Entry(key: fold(second), word: second, score: score))
+        pairCount += 1
       }
     }
     next = next.mapValues { list in
