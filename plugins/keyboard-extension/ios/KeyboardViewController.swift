@@ -3729,6 +3729,41 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     toneButton.isHidden = shown != nil
     clipboardButton.isHidden = shown != nil
     if let shown { tavsiyaBar.show(shown.words, literal: shown.literal) }
+    logTavsiyaState(shown: shown != nil)
+  }
+
+  /// G55 diagnosis (owner 2026-11-14: «matn tavsiyasi ishlamayapti»): why the row shows or not, written to the device
+  /// log when the reason changes — `pymobiledevice3 syslog live -m gapla-tavsiya`.
+  private var lastTavsiyaReason: String?
+
+  private func logTavsiyaState(shown: Bool) {
+    let reason: String
+    if shown {
+      reason = "korinadi"
+    } else if !hasFullAccess {
+      reason = "full-access-yoq"
+    } else if !recordButton.isHidden {
+      reason = "pill-korinib-turibdi"
+    } else if isAgentReviewShown || recordingOrb.isShowing {
+      reason = "agent-yoki-shar"
+    } else if !(layoutMode == .letters || layoutMode == .numbers || layoutMode == .symbols) {
+      reason = "sahifa"
+    } else if !tavsiyaOn {
+      reason = "til-\(keyboardLanguage.rawValue)"
+    } else if !tavsiyaFieldAllowed {
+      reason = "maydon"
+    } else if !GaplaTavsiya.shared.hasWords {
+      reason = "lugat-bosh"
+    } else if !(textDocumentProxy.selectedText ?? "").isEmpty {
+      reason = "tanlangan-matn"
+    } else if textDocumentProxy.documentContextBeforeInput == nil {
+      reason = "oldingi-matn-yoq"
+    } else {
+      reason = "soz-yoq"
+    }
+    guard reason != lastTavsiyaReason else { return }
+    lastTavsiyaReason = reason
+    KeyboardLog.ui.notice("gapla-tavsiya \(reason, privacy: .public)")
   }
 
   /// The words to show, best first; nil shows the toolbar. `literal`: nothing in the list matches the word being

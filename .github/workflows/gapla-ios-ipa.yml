@@ -8,6 +8,10 @@ name: Gapla iOS IPA
 on:
   push:
     branches: [main]
+    # kompyuter/ — Mac ilovasi (o'z yig'ishi: gapla-mac-dmg.yml); u o'zgarsa iPhone qayta yig'ilmaydi.
+    paths-ignore:
+      - "kompyuter/**"
+      - ".github/workflows/gapla-mac-dmg.yml"
   workflow_dispatch:
 
 permissions:
