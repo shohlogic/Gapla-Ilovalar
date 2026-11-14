@@ -56,8 +56,8 @@ export default function KeyboardLanguagesScreen() {
 
       <View className="mx-4 mt-1 px-4">
         <Text className="text-[13px] text-secondaryLabel">
-          So'z tavsiyalari faqat o'zbekchada chiqadi. O'zgarish klaviatura keyingi safar ochilganda
-          ko'rinadi.
+          O'zbekcha, turkcha va inglizcha klaviaturada o'zbekcha so'zlar taklif qilinadi. O'zgarish
+          klaviatura keyingi safar ochilganda ko'rinadi.
         </Text>
       </View>
     </SettingsScreen>

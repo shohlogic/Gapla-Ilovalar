@@ -3748,7 +3748,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       reason = "agent-yoki-shar"
     } else if !(layoutMode == .letters || layoutMode == .numbers || layoutMode == .symbols) {
       reason = "sahifa"
-    } else if !tavsiyaOn {
+    } else if !tavsiyaShows {
       reason = "til-\(keyboardLanguage.rawValue)"
     } else if !tavsiyaFieldAllowed {
       reason = "maydon"
@@ -3798,21 +3798,26 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     return first.isUppercase ? GaplaTavsiya.capitalizedFirst(word) : word
   }
 
-  /// Gapla (G58): the word suggestions are Uzbek. In any other keyboard language nothing is suggested, no word is
-  /// counted and nothing goes to the server — the one switch every suggestion path asks: tavsiyaFieldAllowed (shown,
-  /// counted, picked), the typed word, and startTavsiyaIfOn and viewWillDisappear (read, fetched, sent).
+  /// Gapla (G58): words are counted toward the owner's list, and sent to the server, only from the Uzbek keyboard —
+  /// the typed word, countTypedWordIfFinished, a picked suggestion and viewWillDisappear's flush ask this.
   private var tavsiyaOn: Bool { keyboardLanguage == .uz }
 
-  /// G58: the saved word list is read, and fetched again when due, only while the keyboard is in Uzbek.
+  /// Gapla (G62, owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md], chose «O'zbekcha hamma tilda»): the
+  /// Uzbek list is also suggested on the Turkish and English keyboards, where he types Uzbek too; nothing typed there
+  /// is counted (tavsiyaOn). The Cyrillic keyboards show none: no Latin word can match them.
+  private var tavsiyaShows: Bool { keyboardLanguage == .uz || keyboardLanguage == .tr || keyboardLanguage == .en }
+
+  /// G58/G62: the saved word list is read, and fetched again when due, while the keyboard suggests (tavsiyaShows).
   private func startTavsiyaIfOn() {
-    guard hasFullAccess, tavsiyaOn else { return }
+    guard hasFullAccess, tavsiyaShows else { return }
     GaplaTavsiya.shared.start(accessGroup: "group.\(Self.resolvedContainingAppBundleID)")
   }
 
   /// Contract rule 6: no suggestions and no counting in password, e-mail, address, number or name-and-phone fields, or
-  /// where the field turns autocorrection off — Apple's keyboard hides its suggestions there too. G58: Uzbek only.
+  /// where the field turns autocorrection off — Apple's keyboard hides its suggestions there too. G62: Uzbek, Turkish
+  /// and English keyboards (tavsiyaShows); counting stays Uzbek (tavsiyaOn).
   private var tavsiyaFieldAllowed: Bool {
-    guard tavsiyaOn else { return false }
+    guard tavsiyaShows else { return false }
     let proxy = textDocumentProxy
     if proxy.isSecureTextEntry == true { return false }
     if (proxy.autocorrectionType ?? .default) == .no { return false }
@@ -3833,7 +3838,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let context = GaplaTavsiya.Context(before: before)
     let partial = context?.partial ?? ""
     for _ in 0..<partial.count { proxy.deleteBackward() }
-    if hasFullAccess && tavsiyaFieldAllowed {
+    if hasFullAccess && tavsiyaOn && tavsiyaFieldAllowed {
       GaplaTavsiya.shared.countTyped(
         word,
         previous: context?.previous,
@@ -3866,7 +3871,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func countTypedWordIfFinished() {
     let typed = tavsiyaTypedWord
     tavsiyaTypedWord = ""
-    guard !typed.isEmpty, hasFullAccess, tavsiyaFieldAllowed,
+    guard !typed.isEmpty, hasFullAccess, tavsiyaOn, tavsiyaFieldAllowed,
           let before = textDocumentProxy.documentContextBeforeInput,
           let context = GaplaTavsiya.Context(before: before),
           !context.partial.isEmpty,

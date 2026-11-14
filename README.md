@@ -1,4 +1,4 @@
-# Gapla — iPhone va iPad
+# Gapla — iPhone, iPad va Mac
 
 Gapla o'zbekcha ovozli yozish ilovasi. Gapla klaviaturasida tugmani bosib gapirasiz, matn o'zi yoziladi.
 
