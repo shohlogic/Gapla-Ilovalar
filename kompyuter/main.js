@@ -1460,6 +1460,13 @@ async function startApp() {
     debugLogger.warn("Gapla tarjima setup failed", { error: error?.message }, "tarjima");
   }
 
+  // Gapla G64: har diktovka vaqti (yozuv to'xtadi → … → matn joylandi) faylga: <userData>/logs/gapla-diktovka-vaqt.log.
+  try {
+    require("./src/helpers/gaplaDiktovkaVaqt").setupGaplaDiktovkaVaqt({ ipcMain, app, debugLogger });
+  } catch (error) {
+    debugLogger.warn("Gapla diktovka vaqti setup failed", { error: error?.message }, "audio");
+  }
+
   // Phase 2: Initialize remaining managers after windows are visible
   initializeDeferredManagers();
   if (process.platform === "darwin") {

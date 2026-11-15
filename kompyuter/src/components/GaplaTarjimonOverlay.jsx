@@ -7,6 +7,7 @@ import { formatHotkeyLabel } from "../utils/hotkeys";
 const IS_MAC = getPlatform() === "darwin";
 const OCHISH_TUGMASI = formatHotkeyLabel("Alt+T");
 const JOYLASH_TUGMASI = IS_MAC ? "Cmd+V" : "Ctrl+V";
+const TARJIMA_TUGMASI = IS_MAC ? "Cmd+Enter" : "Ctrl+Enter";
 
 // Gapla tarjimoni (G56, 2026-11-13) — Alt+T oynasi. Namuna: Android 1.4.9 (GaplaTarjimonActivity.kt), yozuvlar va
 // tartib bir xil. Egasi: «har safar avtomatik 2 ta variant beradi, birinchisi birga bir tarjima, ikkinchisi esa gramatik
@@ -19,7 +20,6 @@ const TILLAR = [
   ["en", "English"],
 ];
 const TIL_KALIT = "gaplaTarjimaTil";
-const TOXTALISH_MS = 1200; // yozishdagi to'xtalishdan keyin o'zi tarjima qiladi (Android'dagi kabi)
 const MAX_BELGI = 20000;
 const XABAR_MS = 1600;
 
@@ -129,9 +129,7 @@ export default function GaplaTarjimonOverlay() {
   const [yozish, setYozish] = useState("idle"); // diktovka holati: idle | preparing | recording | processing
   const [xabar, setXabar] = useState(null);
   const [nusxaTur, setNusxaTur] = useState(null);
-  const [zudlik, setZudlik] = useState(0); // qo'yish yoki diktovka — kutmasdan tarjima
   const maydonRef = useRef(null);
-  const kutmasdanRef = useRef(false);
   const oxirgiRef = useRef(null); // [matn, til] — xuddi shu so'rov qayta yuborilmaydi
   const sorovRef = useRef(0);
   const xabarTimer = useRef(null);
@@ -172,21 +170,16 @@ export default function GaplaTarjimonOverlay() {
     [api, matn, til, natija]
   );
 
-  // Yozishdagi qisqa to'xtalish, til almashishi, qo'yish yoki diktovka — o'zi tarjima qiladi.
+  // G65 (egasi, 2026-11-14): «hamma jixozlarda men tarjima so'zini bosganimdan keyin tarjima qilishi kerak» — yozish,
+  // til almashishi, qo'yish va diktovka o'zi tarjima qilmaydi; faqat «Tarjima» tugmasi (yoki Ctrl/Cmd+Enter).
+  // Maydon bo'shatilsa eski natija va kutilayotgan javob tashlanadi.
   useEffect(() => {
-    if (!matn.trim()) {
-      sorovRef.current += 1;
-      setNatija(null);
-      setXato(null);
-      setYuklanmoqda(false);
-      return undefined;
-    }
-    const darhol = kutmasdanRef.current;
-    kutmasdanRef.current = false;
-    const t = setTimeout(() => void tarjimaQil(), darhol ? 0 : TOXTALISH_MS);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matn, til, zudlik]);
+    if (matn.trim()) return;
+    sorovRef.current += 1;
+    setNatija(null);
+    setXato(null);
+    setYuklanmoqda(false);
+  }, [matn]);
 
   const maydongaQosh = useCallback((qism) => {
     const el = maydonRef.current;
@@ -206,8 +199,6 @@ export default function GaplaTarjimonOverlay() {
       });
       return yangi;
     });
-    kutmasdanRef.current = true;
-    setZudlik((z) => z + 1);
   }, []);
 
   const qoyish = useCallback(async () => {
@@ -378,10 +369,12 @@ export default function GaplaTarjimonOverlay() {
           <button
             type="button"
             onClick={() => void tarjimaQil(true)}
-            disabled={!matn.trim()}
-            className="ml-auto h-9 rounded-full bg-primary px-4 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-40"
-            title="Hozir tarjima qilish (Ctrl+Enter)"
+            disabled={!matn.trim() || yuklanmoqda}
+            aria-busy={yuklanmoqda}
+            className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-full bg-primary px-4 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-40"
+            title={`Tarjima qilish (${TARJIMA_TUGMASI})`}
           >
+            {yuklanmoqda && <Loader2 className="size-4 animate-spin" />}
             Tarjima
           </button>
         </div>

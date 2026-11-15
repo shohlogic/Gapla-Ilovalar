@@ -155,6 +155,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   gaplaTarjimaPlace: (text) => ipcRenderer.invoke("gapla-tarjima-place", text),
   gaplaTarjimaDictate: () => ipcRenderer.invoke("gapla-tarjima-dictate"),
   gaplaTarjimaClose: () => ipcRenderer.send("gapla-tarjima-close"),
+  // Gapla G64: diktovka bosqich vaqtlari (matnsiz) — asosiy jarayon faylga yozadi.
+  gaplaDiktovkaVaqt: (yozuv) => ipcRenderer.send("gapla-diktovka-vaqt", yozuv),
+  // Gapla G64: ko'prikka ketadigan ovozni opus 32 kbps 16 kHz mono ga siqish (asosiy jarayondagi ffmpeg).
+  gaplaOpus32: (data) => ipcRenderer.invoke("gapla-opus32", data),
   onGaplaTarjimaOpened: registerListener("gapla-tarjima-opened", (callback) => () => callback()),
   onGaplaTarjimaDictated: registerListener(
     "gapla-tarjima-dictated",

@@ -12,6 +12,8 @@ import { isAzureOpenAIEndpoint } from "../utils/urlUtils";
 import { withSessionRefresh } from "../lib/auth";
 import { getBaseLanguageCode, getLanguageLabel } from "../utils/languageSupport";
 import { convertToWav, needsWavConversion } from "../utils/audioContainer";
+import { gaplaSarlavhalar, gaplaQurilma, isGaplaBridgeEndpoint, yangiVaqt } from "./gaplaDiktovkaOlchov";
+import { getPlatform } from "../utils/platform";
 import {
   applyChineseScript,
   mergeWhisperPrompt,
@@ -1924,6 +1926,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
     audioBlob = audioBlob || new Blob([], { type: this.recordingMimeType || "audio/webm" });
     this.lastAudioBlob = audioBlob;
+    const gaplaToxtadi = this._gaplaStopAt ?? Date.now();
+    this._gaplaStopAt = null;
+    const gaplaAudioTayyor = Date.now();
 
     logger.info(
       "Recording stopped",
@@ -1977,11 +1982,22 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     this._streamingCommitActive = false;
     const rawWav = await rawWavPromise;
 
+    // Gapla G64: bosqich vaqtlari (matnsiz) — oxirida asosiy jarayon faylga yozadi (gaplaDiktovkaVaqt.js).
+    const gaplaVaqt = yangiVaqt({
+      toxtadi: gaplaToxtadi,
+      audioTayyor: gaplaAudioTayyor,
+      audioSoniya: durationSeconds,
+      hajm: audioBlob.size,
+      tur: audioBlob.type,
+    });
+    gaplaVaqt.qurilma = gaplaQurilma(getPlatform());
+
     await this.processAudio(
       audioBlob,
       {
         durationSeconds,
         analyticsOccurredAt,
+        gaplaVaqt,
         ...(salvagedRecording ? { salvagedRecording: true } : {}),
         ...(previewStop?.streamed ? { streamedText: previewStop.text } : {}),
         ...(rawWav ? { rawWav } : {}),
@@ -1989,6 +2005,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       processingPipeline
     );
     await processingPipeline.resultHandled;
+    gaplaVaqt.joylandi = Date.now();
+    try {
+      window.electronAPI?.gaplaDiktovkaVaqt?.(gaplaVaqt);
+    } catch {
+      // o'lchov diktovkaga xalal bermasin
+    }
   }
 
   async replaceBatchMic(replacement) {
@@ -2037,10 +2059,13 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       return true;
     }
     if (this.mediaRecorder?.state === "recording") {
+      // Gapla G64: yozuv to'xtagan payt — diktovka vaqtini o'lchash shu yerdan boshlanadi.
+      this._gaplaStopAt = Date.now();
       this.mediaRecorder.stop();
       return true;
     }
     if (this.isRecording && !this.isStreaming) {
+      this._gaplaStopAt = Date.now();
       // The mic died mid-recovery, so no live recorder exists; finalize what
       // was captured instead of leaving the recording unstoppable.
       void this.finalizeBatchRecording(null);
@@ -2388,7 +2413,13 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         result = await this.processWithOpenAIAPI(audioBlob, metadata, wasCancelled);
       }
 
+      if (metadata.gaplaVaqt) {
+        metadata.gaplaVaqt.rejim = metadata.gaplaVaqt.rejim || (useLocalWhisper ? `lokal-${activeModel}` : activeModel);
+        metadata.gaplaVaqt.natija = result?.text?.trim() ? "matn" : "bo'sh";
+      }
+
       if (wasCancelled() || !this.isProcessing) {
+        if (metadata.gaplaVaqt) metadata.gaplaVaqt.natija = "bekor";
         return;
       }
 
@@ -2446,6 +2477,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       logger.info("Pipeline timing", timingData, "performance");
     } catch (error) {
       const errorAtMs = Math.round(performance.now() - pipelineStart);
+      if (metadata.gaplaVaqt) {
+        metadata.gaplaVaqt.natija = wasCancelled() ? "bekor" : `xato:${error?.code || error?.status || "?"}`;
+      }
 
       if (wasCancelled()) {
         // The user cancelled mid-pipeline; the aborted request's rejection is
@@ -4143,8 +4177,37 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       // Chromium's WebM/Opus recordings always are. Re-encode for those rather
       // than failing the dictation; a conversion failure falls through to the
       // original bytes so this can only widen what works.
+      // Gapla G64: ko'prikka qaysi tur ketishi — `gapla.json` → `bridgeAudio`:
+      //   "opus32" — opus 32 kbps 16 kHz mono (asosiy jarayondagi ffmpeg). Ota oyna qarori (2026-11-14): 20 ta sinov
+      //            ovozida aniqlik 99,0 % · 694 KB (WAV 98,3 % · 5 269 KB); server WAV'ni ham o'zi shu turga o'giradi.
+      //   "webm"  — yozuv yozilganicha (128 kbps); sinovda WAV'dan kamroq barqaror chiqdi.
+      //   "wav"   — eski yo'l. opus32 siqishi xato bersa ham shu yo'lga qaytiladi.
+      const endpoint = this.getTranscriptionEndpoint(route);
+      const gaplaBridge = provider === "custom" && isGaplaBridgeEndpoint(endpoint);
+      const gaplaWebm = gaplaBridge && GAPLA_DEFAULTS.bridgeAudio === "webm";
+      const gaplaVaqt = metadata.gaplaVaqt ?? null;
       let uploadAudio = optimizedAudio;
-      if (needsWavConversion(provider, optimizedAudio.type, optimizedAudio.size)) {
+      let gaplaSiqildi = false;
+      if (gaplaBridge && GAPLA_DEFAULTS.bridgeAudio === "opus32" && optimizedAudio.size > 0) {
+        try {
+          const siqilgan = await window.electronAPI?.gaplaOpus32?.(await optimizedAudio.arrayBuffer());
+          if (siqilgan && siqilgan.byteLength > 0) {
+            uploadAudio = new Blob([siqilgan], { type: "audio/webm;codecs=opus" });
+            gaplaSiqildi = true;
+          }
+        } catch (siqishXatosi) {
+          logger.warn(
+            "Gapla opus32 siqish bo'lmadi — WAV yuboriladi",
+            { error: siqishXatosi?.message },
+            "transcription"
+          );
+        }
+      }
+      if (
+        !gaplaWebm &&
+        !gaplaSiqildi &&
+        needsWavConversion(provider, optimizedAudio.type, optimizedAudio.size)
+      ) {
         try {
           const wavAudio = await convertToWav(optimizedAudio);
           // Keep compressed recordings usable on endpoints that already accept
@@ -4174,6 +4237,13 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       // Decoding can outlive cancellation and a newer recording's request.
       if (wasCancelled()) throw new DOMException("Transcription cancelled", "AbortError");
 
+      if (gaplaVaqt) {
+        gaplaVaqt.yuklashTayyor = Date.now();
+        gaplaVaqt.yuklashHajm = uploadAudio.size;
+        gaplaVaqt.yuklashTur = uploadAudio.type || null;
+        gaplaVaqt.rejim = model;
+      }
+
       const formData = new FormData();
       // Determine the correct file extension based on the blob type
       const mimeType = uploadAudio.type || "audio/webm";
@@ -4196,8 +4266,6 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       if (language && model !== "orukeet-v0.1.0") {
         formData.append("language", language);
       }
-
-      const endpoint = this.getTranscriptionEndpoint(route);
 
       // gpt-transcribe takes the dictionary on its own keywords[] channel (see
       // dictionaryKeywords), highest priority first so the keyword cap only ever
@@ -4294,6 +4362,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         } else {
           headers.Authorization = `Bearer ${apiKey}`;
         }
+      }
+      // Gapla G64: server jurnali uchun — qaysi qurilma, yozuv qachon to'xtadi, so'rov qachon jo'natildi.
+      if (gaplaBridge) {
+        const yuborildi = Date.now();
+        Object.assign(headers, gaplaSarlavhalar(gaplaVaqt, getPlatform(), yuborildi));
+        if (gaplaVaqt) gaplaVaqt.yuborildi = yuborildi;
       }
 
       logger.debug(
@@ -4418,6 +4492,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           "transcription"
         );
       }
+
+      if (gaplaVaqt) gaplaVaqt.javob = Date.now();
 
       // Check for text - handle both empty string and missing field
       if (result.text && result.text.trim().length > 0) {

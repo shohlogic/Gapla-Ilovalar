@@ -1,5 +1,6 @@
 {
   "bridgeUrl": "https://gapla.xaliljonov.uz/v1",
+  "bridgeAudio": "opus32",
   "cloudModel": "gapla-orta",
   "localWhisperModel": "rubaistt",
   "language": "ru",

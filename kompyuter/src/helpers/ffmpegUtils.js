@@ -261,6 +261,35 @@ async function convertBufferToWav(audioBuffer, options = {}) {
   }
 }
 
+// Gapla G64 (2026-11-14): Gapla ko'prigiga ketadigan ovoz — opus 32 kbps, 16 kHz, mono, WebM ichida. Ota oyna 20 ta
+// sinov ovozida o'lchagan: aniqlik WAV 98,3 % · 5 269 KB, shu tur 99,0 % · 694 KB. Server WAV'ni ham o'zi shu turga
+// o'giradi — kompyuter uni yo'lda 7–8 barobar kichik qilib yuboradi.
+async function convertBufferToOpus32(audioBuffer, options = {}) {
+  const { getSafeTempDir } = require("./safeTempDir");
+  const tempDir = getSafeTempDir();
+  const stamp = `${Date.now()}-${process.pid}-${++reencodeSequence}`;
+  const inputPath = path.join(tempDir, `gapla-opus-${stamp}.input`);
+  const outputPath = path.join(tempDir, `gapla-opus-${stamp}.webm`);
+
+  try {
+    fs.writeFileSync(inputPath, audioBuffer);
+    await runFFmpegConversion(
+      ["-i", inputPath, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "32k", "-f", "webm"],
+      outputPath,
+      options
+    );
+    return fs.readFileSync(outputPath);
+  } finally {
+    for (const filePath of [inputPath, outputPath]) {
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch {
+        // vaqtinchalik fayl qolsa ham diktovka to'xtamasin
+      }
+    }
+  }
+}
+
 function parseWavFormat(wavBuffer) {
   if (!isWavFormat(wavBuffer)) return null;
 
@@ -549,6 +578,7 @@ module.exports = {
   isPcm16Mono16kWav,
   convertToWav,
   convertBufferToWav,
+  convertBufferToOpus32,
   convertToMp3,
   splitAudioFile,
   parseFfmpegDuration,
