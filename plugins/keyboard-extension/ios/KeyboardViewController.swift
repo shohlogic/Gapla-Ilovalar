@@ -840,6 +840,18 @@ private final class KeyPopupView: UIView {
   }
 }
 
+/// Gapla (G56): a button that reports when it is shown or hidden — the processing ✕ beside the dictation pill, so the
+/// translate button (文A), which it would overlap, steps aside while it is up (refreshTranslateButton).
+private final class VisibilityReportingButton: UIButton {
+  var onHiddenChanged: ((Bool) -> Void)?
+
+  override var isHidden: Bool {
+    didSet {
+      if oldValue != isHidden { onHiddenChanged?(isHidden) }
+    }
+  }
+}
+
 private struct DictationLinkView: View {
   let url: URL
 
@@ -1342,7 +1354,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private let processingDots = ProcessingDotsView()
   // Sits beside the processing pill ("Transcribing"/"Cleaning up") to abandon
   // the in-flight transcription. Hidden in every other state.
-  private let processingCancelButton = UIButton(type: .system)
+  private let processingCancelButton = VisibilityReportingButton(type: .system)
   private let toneButton = KeyButton(type: .system)
   private let keyboardRowsStack = KeyboardRowsStack()
   private let lettersRowsStack = UIStackView()
@@ -1396,6 +1408,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private let dimmedKeysView = UIImageView()
 
   private let agentButton = KeyButton(type: .system)
+  /// Gapla (G56): the translator (文A), beside the dictation button; opens the app's translator page.
+  private let translateButton = KeyButton(type: .system)
 
   private let agentReviewCanvas = UIView()
   private let agentReviewHeaderLabel = UILabel()
@@ -1487,6 +1501,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // it can't collide with a normal-dictation transcription. The Link overlay
   // drives the not-ready handoff exactly like the record button's.
   private var agentLinkHosting: UIHostingController<DictationLinkView>?
+  private var translateLinkHosting: UIHostingController<DictationLinkView>?
   // The current recording is an agent instruction (spoken → generated), so its
   // canvas header and post-stop state differ from normal dictation. Set when the
   // agent button starts recording in place; cleared on reset/exit.
@@ -1661,6 +1676,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     refreshTavsiya()
     refreshToneButton()
     refreshAgentButton()
+    insertPendingTranslation()
     // The review card owns the screen until the user acts on it; don't let a
     // stale recording flag or resume path tear it down on reappear. Re-gate its
     // controls so the regenerate/follow-up wake-links reflect current app
@@ -2891,6 +2907,15 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     agentPress.delegate = self
     agentButton.addGestureRecognizer(agentPress)
 
+    // Gapla (G56, owner 2026-11-12/13): the translator, beside the dictation button. Its mark is 文A, not a globe: the
+    // globe below the keys switches keyboards. The tap goes to the Link overlay (setupTranslateLink).
+    configureToolbarButton(
+      translateButton,
+      image: UIImage(systemName: "translate") ?? UIImage(systemName: "character.bubble"),
+      accessibilityLabel: "Tarjimon"
+    )
+    processingCancelButton.onHiddenChanged = { [weak self] _ in self?.refreshTranslateButton() }
+
     // Gapla (G41, G55, owner 2026-11-11: the keyboard does not grow): while he types, the suggestions take the left
     // tools' place up to the dictation button, which stays (refreshTavsiya).
     tavsiyaBar.translatesAutoresizingMaskIntoConstraints = false
@@ -2927,8 +2952,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       agentButton.widthAnchor.constraint(equalToConstant: Metrics.toolbarButtonSize),
       agentButton.heightAnchor.constraint(equalToConstant: Metrics.toolbarButtonSize),
 
+      translateButton.trailingAnchor.constraint(equalTo: agentButton.leadingAnchor, constant: -Metrics.toolbarButtonInset),
+      translateButton.centerYAnchor.constraint(equalTo: stripGuide.centerYAnchor),
+      translateButton.widthAnchor.constraint(equalToConstant: Metrics.toolbarButtonSize),
+      translateButton.heightAnchor.constraint(equalToConstant: Metrics.toolbarButtonSize),
+
       tavsiyaBar.leadingAnchor.constraint(equalTo: stripGuide.leadingAnchor),
-      tavsiyaBar.trailingAnchor.constraint(equalTo: agentButton.leadingAnchor, constant: -Metrics.toolbarButtonInset),
+      tavsiyaBar.trailingAnchor.constraint(equalTo: translateButton.leadingAnchor, constant: -Metrics.toolbarButtonInset),
       tavsiyaBar.topAnchor.constraint(equalTo: stripGuide.topAnchor),
       tavsiyaBar.bottomAnchor.constraint(equalTo: stripGuide.bottomAnchor),
 
@@ -2950,6 +2980,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     ])
 
     setupAgentLink()
+    setupTranslateLink()
     refreshAgentButton()
     setupDictationLink()
 
@@ -3154,6 +3185,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func refreshAgentButton() {
     // isAgentEnabled() already fails closed on a dead App Group; stating it
     // makes the intent greppable rather than incidental.
+    refreshTranslateButton()
     guard hasFullAccess else {
       agentButton.isHidden = true
       agentLinkHosting?.view.isUserInteractionEnabled = false
@@ -3172,6 +3204,51 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     agentLinkHosting?.view.isUserInteractionEnabled = !recordsInPlace
   }
 
+
+  /// Gapla (G56): the translate button opens the app's translator page (app/tarjimon.tsx). The host is passed along so
+  /// «Joylash» there can come back here and the picked translation lands in this field (insertPendingTranslation).
+  private func setupTranslateLink() {
+    let provider = KeyboardHandoffProvider.shared
+    var components = URLComponents(string: "\(Self.appUrlScheme)://tarjimon")!
+    components.queryItems = [URLQueryItem(name: "source", value: "keyboard")]
+    if let bundle = provider.detectHostBundleID(from: self) {
+      components.queryItems?.append(URLQueryItem(name: "hostBundle", value: bundle))
+    }
+    guard let url = components.url else { return }
+
+    let hosting = UIHostingController(rootView: DictationLinkView(url: url))
+    hosting.view.backgroundColor = .clear
+    hosting.view.isOpaque = false
+    hosting.view.translatesAutoresizingMaskIntoConstraints = false
+
+    addChild(hosting)
+    translateButton.addSubview(hosting.view)
+    hosting.didMove(toParent: self)
+
+    NSLayoutConstraint.activate([
+      hosting.view.leadingAnchor.constraint(equalTo: translateButton.leadingAnchor),
+      hosting.view.trailingAnchor.constraint(equalTo: translateButton.trailingAnchor),
+      hosting.view.topAnchor.constraint(equalTo: translateButton.topAnchor),
+      hosting.view.bottomAnchor.constraint(equalTo: translateButton.bottomAnchor),
+    ])
+
+    translateLinkHosting = hosting
+  }
+
+  /// Without Full Access the keyboard cannot open the app, so the button is hidden, as the dictation button is. It
+  /// also steps aside while the processing ✕ is up, which would overlap it.
+  private func refreshTranslateButton() {
+    let shows = hasFullAccess && processingCancelButton.isHidden
+    translateButton.isHidden = !shows
+    translateLinkHosting?.view.isUserInteractionEnabled = shows
+  }
+
+  /// Gapla (G56): the translation picked with «Joylash» in the app's translator, typed into this field once.
+  private func insertPendingTranslation() {
+    guard let translation = KeyboardHandoffProvider.shared.consumePendingTranslation() else { return }
+    insertSmartText(translation)
+    refreshAfterEdit()
+  }
 
   private func setupDictationLink() {
     let provider = KeyboardHandoffProvider.shared
@@ -6417,6 +6494,23 @@ private struct KeyboardHandoffProvider {
 
   private let pendingTranscriptKey = "keyboard_pending_transcript"
   private let pendingTranscriptJobIdKey = "keyboard_pending_transcript_job_id"
+  // Gapla (G56): written by the app's translator on «Joylash» (src/screens/TarjimonScreen.tsx).
+  private let pendingTranslationKey = "gapla_tarjima_joylash"
+  private let pendingTranslationAtMsKey = "gapla_tarjima_joylash_ms"
+
+  /// The translation the app's translator handed over, taken once. Older than two minutes it is dropped, so it never
+  /// lands late in some other field.
+  func consumePendingTranslation() -> String? {
+    guard let defaults = Self.sharedDefaults,
+          let text = defaults.string(forKey: pendingTranslationKey) else { return nil }
+    let atMs = Double(defaults.string(forKey: pendingTranslationAtMsKey) ?? "") ?? 0
+    defaults.removeObject(forKey: pendingTranslationKey)
+    defaults.removeObject(forKey: pendingTranslationAtMsKey)
+    let ageMs = Date().timeIntervalSince1970 * 1000 - atMs
+    guard ageMs >= 0, ageMs < 120_000, !text.isEmpty else { return nil }
+    return text
+  }
+
   private let orphanedRawTranscriptKey = "keyboard_orphaned_raw_transcript"
   private let orphanedRawTranscriptJobIdKey = "keyboard_orphaned_raw_transcript_job_id"
   private let recordingJobIdKey = "keyboard_recording_job_id"

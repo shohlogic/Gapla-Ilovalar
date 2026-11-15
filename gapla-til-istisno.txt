@@ -189,3 +189,7 @@ src/lib/keyboardLanguages.ts:English  # inglizcha klaviatura nomi o'z tilida (Kl
 
 # --- Diktovka vaqti (G64): qurilma jurnali qatori, ekranga chiqmaydi ---
 modules/app-group-storage/ios/GaplaVaqt.swift:gapla-vaqt job=  # qurilma jurnalidagi vaqt qatori, ekranga chiqmaydi; kompyuterdan syslog bilan o'qiladi (G64)
+
+# --- Tarjimon (G56) ---
+src/lib/gaplaTarjima.ts:English  # tarjima tili o'z nomi bilan, Android tarjimonidagidek (ruscha «Русский» kabi) (G56)
+src/lib/gaplaTarjima.ts:Bearer  # Gapla serveriga kalit sarlavhasi, ekranga chiqmaydi (G56)

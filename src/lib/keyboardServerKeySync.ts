@@ -15,7 +15,8 @@ import { AppGroupStorage } from '../../modules/app-group-storage/src';
 // The dictation default in useConfigStore (GAPLA_BRIDGE.endpoint).
 const GAPLA_BRIDGE_ENDPOINT = 'https://gapla.xaliljonov.uz/v1';
 
-function bridgeEndpoint(): string {
+/** The Gapla server's API base (…/v1); the translator (src/lib/gaplaTarjima.ts) calls it too. */
+export function bridgeEndpoint(): string {
   const dictation = useConfigStore.getState().config?.inference?.dictation;
   const endpoint = dictation?.providerId === 'custom' ? dictation.endpoint : undefined;
   return endpoint && isGaplaBridge(endpoint) ? endpoint : GAPLA_BRIDGE_ENDPOINT;
@@ -23,6 +24,13 @@ function bridgeEndpoint(): string {
 
 async function bridgeReference(): Promise<string> {
   return getProviderCredentialReference('custom', bridgeEndpoint());
+}
+
+/** The Gapla server key — the dictation key — or null when none is saved. Never logged. */
+export async function gaplaServerKey(): Promise<string | null> {
+  const credential = await getProviderCredential(await bridgeReference());
+  const key = credential?.apiKey?.trim();
+  return key ? key : null;
 }
 
 export async function syncKeyboardServerKey(): Promise<void> {

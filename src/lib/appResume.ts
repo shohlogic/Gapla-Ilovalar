@@ -3,6 +3,7 @@ import { useHandoffStore } from '@/store/useHandoffStore';
 import { isRecoveryDeepLinkFresh, isRecoveryHolding } from '@/store/useKeyboardRecoveryStore';
 import { useUsageStore } from '@/store/useUsageStore';
 import { isAffiliateArrivalFresh } from './affiliateLink';
+import { isTarjimonHolding } from './tarjimonHolat';
 
 export interface ResumeDecision {
   /** Reset the stack to Home — the default for a warm resume. */
@@ -37,6 +38,9 @@ export function resolveResumeAction(alreadyOnHome: boolean): ResumeDecision {
   if (isRecoveryDeepLinkFresh()) return STAY;
 
   if (useGoogleCalendarStore.getState().isAuthSessionActive) return STAY;
+
+  // Gapla (G56): the translator the keyboard opened, and the moment before it mounts.
+  if (isTarjimonHolding()) return STAY;
 
   // Returning from the external billing portal: stay on Account and refresh
   // the entitlement after any subscription-management change.

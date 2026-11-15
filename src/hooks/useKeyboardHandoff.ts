@@ -21,6 +21,7 @@ import {
 import { cleanupTranscript } from '@/lib/cleanupTranscript';
 import { transcribeAndCleanup } from '@/lib/transcribeAndCleanup';
 import { gaplaVaqt, gaplaVaqtBoshla } from '@/lib/gaplaVaqt';
+import { markTarjimonDeepLink } from '@/lib/tarjimonHolat';
 import { snapshotKeyboardTone, readKeyboardToneSnapshot } from '@/lib/keyboardToneSync';
 import {
   snapshotKeyboardAgentRequest,
@@ -56,6 +57,7 @@ const KEYBOARD_DICTATION_ROUTE = 'keyboard-dictation';
 // (app/keyboard-full-access.tsx); this handler only stamps the recovery store so a
 // concurrent warm resume can't bounce the screen, and must never start a job.
 const KEYBOARD_FULL_ACCESS_ROUTE = 'keyboard-full-access';
+const TARJIMON_ROUTE = 'tarjimon';
 const HANDOFF_THROTTLE_MS = 45_000;
 // How long an Activate tap recorded by the keyboard stays actionable. Covers a
 // cold launch (a few seconds) without resurrecting genuinely stale taps.
@@ -554,6 +556,12 @@ export function useKeyboardHandoff() {
       // its mount effect could claim it.
       if (route === KEYBOARD_FULL_ACCESS_ROUTE) {
         useKeyboardRecoveryStore.getState().markRecoveryDeepLink();
+        return;
+      }
+      // Gapla (G56): the keyboard's 文A button. expo-router opens the translator page itself (app/tarjimon.tsx);
+      // the stamp keeps the warm-resume reset from replacing it with Home before it mounts.
+      if (route === TARJIMON_ROUTE) {
+        markTarjimonDeepLink();
         return;
       }
       if (route !== KEYBOARD_DICTATION_ROUTE) return;

@@ -238,6 +238,15 @@ function RootLayout() {
               gestureEnabled: true,
             }}
           />
+          {/* Gapla (G56): the translator the keyboard's 文A button opens; same modal shape. */}
+          <Stack.Screen
+            name="tarjimon"
+            options={{
+              presentation: 'modal',
+              animation: 'slide_from_bottom',
+              gestureEnabled: true,
+            }}
+          />
         </Stack>
       </ThemeProvider>
     );
