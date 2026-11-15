@@ -1501,7 +1501,27 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // it can't collide with a normal-dictation transcription. The Link overlay
   // drives the not-ready handoff exactly like the record button's.
   private var agentLinkHosting: UIHostingController<DictationLinkView>?
-  private var translateLinkHosting: UIHostingController<DictationLinkView>?
+  /// Gapla (G56, owner 2026-11-15: «shu joydan chiqmasdan turib qilsa bo'lmasmidi?» … «til tanlash va ishlash oson
+  /// blishi kerak»): the translator inside the keyboard (GaplaTarjimon.swift). Non-nil while it is open: the keys, the
+  /// clipboard and dictation then write into this text instead of the field.
+  private var translatorText: String?
+  private var translatorViewsInstalled = false
+  private lazy var translatorPanel = GaplaTarjimonPanel(
+    accent: Palette.accentTint,
+    keyBackground: Palette.keyBackground,
+    textColor: Palette.keyText
+  )
+  private lazy var translatorResults = GaplaTarjimonNatijaView(
+    accent: Palette.accentTint,
+    keyBackground: Palette.keyBackground,
+    textColor: Palette.keyText
+  )
+  private lazy var translatorClient = GaplaTarjimonClient(accessGroup: "group.\(Self.resolvedContainingAppBundleID)")
+  private var isTranslatorOpen: Bool { translatorText != nil }
+  /// The panel and the stack's gap above the toolbar; the keys keep their height below.
+  private var translatorExtraHeight: CGFloat {
+    isTranslatorOpen ? GaplaTarjimonPanel.height + rootStack.spacing : 0
+  }
   // The current recording is an agent instruction (spoken → generated), so its
   // canvas header and post-stop state differ from normal dictation. Set when the
   // agent button starts recording in place; cleared on reset/exit.
@@ -1617,7 +1637,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func applyKeyboardHeight() {
     // The keys keep their height at the bottom; the card above them takes the extra.
     let showsCardHeight = isAgentReviewShown || isAgentActionInFlight
-    let keyboardHeight = metrics.keyboardHeight + (showsCardHeight ? Metrics.agentReviewExtraHeight : 0)
+    let keyboardHeight = metrics.keyboardHeight + translatorExtraHeight
+      + (showsCardHeight ? Metrics.agentReviewExtraHeight : 0)
 
     if let keyboardHeightConstraint {
       keyboardHeightConstraint.constant = keyboardHeight
@@ -1705,6 +1726,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
     logRecordMarker("viewWillDisappear")
+    // G56: an open translator does not come back with the next field.
+    closeTranslator()
     resetRecordingOrbImmediately()
     // Gapla (G8): the clipboard list is never left open to go stale; it reloads when reopened.
     if layoutMode == .clipboard { returnToLetters() }
@@ -1895,6 +1918,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   @objc private func handleBackspaceTapped() {
     playKeyClick()
+    if isTranslatorOpen {
+      deleteFromTranslator(word: false)
+      return
+    }
     textDocumentProxy.deleteBackward()
     if !tavsiyaTypedWord.isEmpty { tavsiyaTypedWord.removeLast() }
     // "Hello. W" ⌫ starts a sentence again.
@@ -1958,6 +1985,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let x = gesture.location(in: view).x
     switch gesture.state {
     case .began:
+      // G56: the translator's line has no cursor to move.
+      if isTranslatorOpen { return }
       spaceCursorActive = true
       spaceCursorLastX = x
       // The cursor leaves the word: it no longer counts as typed here.
@@ -2021,6 +2050,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   private func applyDoubleSpacePeriod() -> Bool {
+    // G56: the translator's text is not the field's.
+    if isTranslatorOpen { return false }
     // Space over a selection replaces it with a space, never ". ".
     guard (textDocumentProxy.selectedText ?? "").isEmpty else { return false }
     let context = textDocumentProxy.documentContextBeforeInput ?? ""
@@ -2068,6 +2099,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   @objc private func handleReturnTapped() {
+    // G56: a line break in the translator's text, whatever the field allows.
+    if isTranslatorOpen {
+      playKeyClick()
+      appendToTranslator("\n")
+      return
+    }
     // Greyed: Apple's does nothing. Asked fresh, as hasText may have changed since the redraw.
     guard !isReturnKeyDisabled else { return }
     playKeyClick()
@@ -2908,12 +2945,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     agentButton.addGestureRecognizer(agentPress)
 
     // Gapla (G56, owner 2026-11-12/13): the translator, beside the dictation button. Its mark is 文A, not a globe: the
-    // globe below the keys switches keyboards. The tap goes to the Link overlay (setupTranslateLink).
+    // globe below the keys switches keyboards. A tap opens or closes the translator above the keys.
     configureToolbarButton(
       translateButton,
       image: UIImage(systemName: "translate") ?? UIImage(systemName: "character.bubble"),
       accessibilityLabel: "Tarjimon"
     )
+    translateButton.addTarget(self, action: #selector(handleTranslateButtonTapped), for: .touchUpInside)
     processingCancelButton.onHiddenChanged = { [weak self] _ in self?.refreshTranslateButton() }
 
     // Gapla (G41, G55, owner 2026-11-11: the keyboard does not grow): while he types, the suggestions take the left
@@ -2980,7 +3018,6 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     ])
 
     setupAgentLink()
-    setupTranslateLink()
     refreshAgentButton()
     setupDictationLink()
 
@@ -3024,6 +3061,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   private func typeText(_ text: String) {
+    // G56: while the translator is open the keys type into its text, not the field.
+    if isTranslatorOpen {
+      appendToTranslator(text)
+      return
+    }
     textDocumentProxy.insertText(text)
     typedDocument = currentDocumentIdentifier
   }
@@ -3205,42 +3247,166 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
 
-  /// Gapla (G56): the translate button opens the app's translator page (app/tarjimon.tsx). The host is passed along so
-  /// «Joylash» there can come back here and the picked translation lands in this field (insertPendingTranslation).
-  private func setupTranslateLink() {
-    let provider = KeyboardHandoffProvider.shared
-    var components = URLComponents(string: "\(Self.appUrlScheme)://tarjimon")!
-    components.queryItems = [URLQueryItem(name: "source", value: "keyboard")]
-    if let bundle = provider.detectHostBundleID(from: self) {
-      components.queryItems?.append(URLQueryItem(name: "hostBundle", value: bundle))
-    }
-    guard let url = components.url else { return }
-
-    let hosting = UIHostingController(rootView: DictationLinkView(url: url))
-    hosting.view.backgroundColor = .clear
-    hosting.view.isOpaque = false
-    hosting.view.translatesAutoresizingMaskIntoConstraints = false
-
-    addChild(hosting)
-    translateButton.addSubview(hosting.view)
-    hosting.didMove(toParent: self)
-
-    NSLayoutConstraint.activate([
-      hosting.view.leadingAnchor.constraint(equalTo: translateButton.leadingAnchor),
-      hosting.view.trailingAnchor.constraint(equalTo: translateButton.trailingAnchor),
-      hosting.view.topAnchor.constraint(equalTo: translateButton.topAnchor),
-      hosting.view.bottomAnchor.constraint(equalTo: translateButton.bottomAnchor),
-    ])
-
-    translateLinkHosting = hosting
+  /// Without Full Access the keyboard reaches no server, so the button is hidden, as the dictation button is. It also
+  /// steps aside while the processing ✕ is up, which would overlap it. Lit while the translator is open.
+  private func refreshTranslateButton() {
+    translateButton.isHidden = !(hasFullAccess && processingCancelButton.isHidden)
+    translateButton.isLongPressed = isTranslatorOpen
   }
 
-  /// Without Full Access the keyboard cannot open the app, so the button is hidden, as the dictation button is. It
-  /// also steps aside while the processing ✕ is up, which would overlap it.
-  private func refreshTranslateButton() {
-    let shows = hasFullAccess && processingCancelButton.isHidden
-    translateButton.isHidden = !shows
-    translateLinkHosting?.view.isUserInteractionEnabled = shows
+  // MARK: Gapla translator inside the keyboard (G56)
+
+  @objc private func handleTranslateButtonTapped() {
+    playKeyClick()
+    if isTranslatorOpen { closeTranslator() } else { openTranslator() }
+  }
+
+  /// The panel sits in the stack above the toolbar, so it fades with the keys under the recording orb; the results take
+  /// the keys' place over the rows.
+  private func installTranslatorViewsIfNeeded() {
+    guard !translatorViewsInstalled else { return }
+    translatorViewsInstalled = true
+    let panel = translatorPanel
+    panel.translatesAutoresizingMaskIntoConstraints = false
+    panel.isHidden = true
+    rootStack.insertArrangedSubview(panel, at: 0)
+    let panelHeight = panel.heightAnchor.constraint(equalToConstant: GaplaTarjimonPanel.height)
+    panelHeight.priority = UILayoutPriority(999)
+    panelHeight.isActive = true
+
+    let results = translatorResults
+    results.translatesAutoresizingMaskIntoConstraints = false
+    results.isHidden = true
+    rootStack.addSubview(results)
+    NSLayoutConstraint.activate([
+      results.topAnchor.constraint(equalTo: keyboardRowsStack.topAnchor),
+      results.bottomAnchor.constraint(equalTo: keyboardRowsStack.bottomAnchor),
+      results.leadingAnchor.constraint(equalTo: keyboardRowsStack.leadingAnchor),
+      results.trailingAnchor.constraint(equalTo: keyboardRowsStack.trailingAnchor),
+    ])
+
+    panel.onKeyClick = { [weak self] in self?.playKeyClick() }
+    panel.onClose = { [weak self] in self?.closeTranslator() }
+    panel.onTranslate = { [weak self] in self?.runTranslation() }
+    panel.onPaste = { [weak self] in self?.pasteIntoTranslator() }
+    panel.onClear = { [weak self] in self?.setTranslatorText("") }
+    results.onEdit = { [weak self] in
+      self?.playKeyClick()
+      self?.showTranslatorResults(false)
+    }
+    results.onCopy = { [weak self] text in
+      self?.playKeyClick()
+      UIPasteboard.general.string = text
+      self?.translatorResults.showNote("Nusxa olindi", isError: false)
+    }
+    results.onInsert = { [weak self] text in
+      self?.playKeyClick()
+      self?.insertTranslation(text)
+    }
+  }
+
+  private func openTranslator() {
+    installTranslatorViewsIfNeeded()
+    if layoutMode != .letters { returnToLetters() }
+    translatorText = ""
+    // G67: every opening starts at O'zbekcha → Русский, with an empty text.
+    translatorPanel.reset()
+    translatorPanel.isHidden = false
+    showTranslatorResults(false)
+    applyTranslatorHeight()
+    refreshTranslateButton()
+    refreshTavsiya()
+  }
+
+  private func closeTranslator() {
+    guard isTranslatorOpen else { return }
+    translatorText = nil
+    if translatorViewsInstalled {
+      translatorClient.cancel()
+      translatorPanel.setBusy(false)
+      translatorPanel.isHidden = true
+      showTranslatorResults(false)
+    }
+    applyTranslatorHeight()
+    refreshTranslateButton()
+    refreshTavsiya()
+  }
+
+  private func applyTranslatorHeight() {
+    rootHeightConstraint?.constant = metrics.keyboardHeight + translatorExtraHeight
+    applyKeyboardHeight()
+  }
+
+  private func showTranslatorResults(_ on: Bool) {
+    guard translatorViewsInstalled else { return }
+    translatorResults.isHidden = !on
+    keyboardRowsStack.alpha = on ? 0 : 1
+    keyboardRowsStack.isUserInteractionEnabled = !on
+  }
+
+  private func setTranslatorText(_ value: String) {
+    guard isTranslatorOpen else { return }
+    translatorText = value
+    translatorPanel.setText(value)
+    // G65: emptying the text drops the old translation; a new one comes only from the button.
+    if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      translatorClient.cancel()
+      translatorPanel.setBusy(false)
+      showTranslatorResults(false)
+    }
+  }
+
+  /// Text from a key, the clipboard or dictation, added at the end — the line has no cursor of its own.
+  private func appendToTranslator(_ piece: String, spaced: Bool = false) {
+    guard var text = translatorText, !piece.isEmpty else { return }
+    if spaced, let last = text.last, !last.isWhitespace, !piece.hasPrefix(" "), !piece.hasPrefix("\n") {
+      text += " "
+    }
+    setTranslatorText(text + piece)
+  }
+
+  private func deleteFromTranslator(word: Bool) {
+    guard var text = translatorText, !text.isEmpty else { return }
+    if word {
+      while let last = text.last, last.isWhitespace || last.isPunctuation { text.removeLast() }
+      while let last = text.last, !(last.isWhitespace || last.isPunctuation) { text.removeLast() }
+    } else {
+      text.removeLast()
+    }
+    setTranslatorText(text)
+  }
+
+  private func pasteIntoTranslator() {
+    guard let copied = UIPasteboard.general.string, !copied.isEmpty else {
+      translatorPanel.setText(translatorText ?? "")
+      return
+    }
+    appendToTranslator(copied, spaced: true)
+  }
+
+  /// Only from the «Tarjima» button (G65): typing, a language tap, a paste or dictation never translate.
+  private func runTranslation() {
+    guard let text = translatorText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
+    translatorPanel.setBusy(true)
+    let source = translatorPanel.source
+    let target = translatorPanel.target
+    translatorClient.translate(text, from: source, to: target) { [weak self] result in
+      guard let self, self.isTranslatorOpen else { return }
+      self.translatorPanel.setBusy(false)
+      switch result {
+      case .success(let natija):
+        self.translatorResults.show(natija, from: source, to: target)
+      case .failure(let error):
+        self.translatorResults.showError(error.localizedDescription)
+      }
+      self.showTranslatorResults(true)
+    }
+  }
+
+  /// «Joylash»: the translator closes and the chosen variant goes into the field the keyboard is typing in.
+  private func insertTranslation(_ text: String) {
+    closeTranslator()
+    insertSmartText(text)
   }
 
   /// Gapla (G56): the translation picked with «Joylash» in the app's translator, typed into this field once.
@@ -3559,7 +3725,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     if metricsChanged {
       metrics = nextMetrics
       applyRootPadding()
-      rootHeightConstraint?.constant = metrics.keyboardHeight
+      rootHeightConstraint?.constant = metrics.keyboardHeight + translatorExtraHeight
       [keyboardRowsStack, lettersRowsStack, numbersRowsStack, symbolsRowsStack, emojiRowsStack, clipboardRowsStack].forEach {
         $0.spacing = metrics.rowGap
       }
@@ -3877,12 +4043,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   /// Gapla (G58): words are counted toward the owner's list, and sent to the server, only from the Uzbek keyboard —
   /// the typed word, countTypedWordIfFinished, a picked suggestion and viewWillDisappear's flush ask this.
-  private var tavsiyaOn: Bool { keyboardLanguage == .uz }
+  private var tavsiyaOn: Bool { keyboardLanguage == .uz && !isTranslatorOpen }
 
   /// Gapla (G62, owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md], chose «O'zbekcha hamma tilda»): the
   /// Uzbek list is also suggested on the Turkish and English keyboards, where he types Uzbek too; nothing typed there
   /// is counted (tavsiyaOn). The Cyrillic keyboards show none: no Latin word can match them.
-  private var tavsiyaShows: Bool { keyboardLanguage == .uz || keyboardLanguage == .tr || keyboardLanguage == .en }
+  private var tavsiyaShows: Bool {
+    !isTranslatorOpen && (keyboardLanguage == .uz || keyboardLanguage == .tr || keyboardLanguage == .en)
+  }
 
   /// G58/G62: the saved word list is read, and fetched again when due, while the keyboard suggests (tavsiyaShows).
   private func startTavsiyaIfOn() {
@@ -4823,7 +4991,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func performRepeatingDelete() {
     playKeyClick()
-    if deleteRepeatCount >= 24 && deleteRepeatCount % 6 == 0 {
+    if isTranslatorOpen {
+      deleteFromTranslator(word: deleteRepeatCount >= 24 && deleteRepeatCount % 6 == 0)
+    } else if deleteRepeatCount >= 24 && deleteRepeatCount % 6 == 0 {
       deletePreviousWordChunk()
     } else {
       textDocumentProxy.deleteBackward()
@@ -5556,6 +5726,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func insertSmartText(_ text: String) {
     guard !text.isEmpty else { return }
+    // G56: dictation while the translator is open fills its text.
+    if isTranslatorOpen {
+      appendToTranslator(text, spaced: true)
+      return
+    }
     // Gapla (G41): dictated text is not counted here — the server learns it itself.
     tavsiyaTypedWord = ""
     tavsiyaLastCounted = nil

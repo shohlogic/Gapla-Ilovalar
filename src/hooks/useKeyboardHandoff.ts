@@ -8,7 +8,6 @@ import {
 import { useEffect, useRef } from 'react';
 import { AppState, Linking } from 'react-native';
 import * as Application from 'expo-application';
-import * as Clipboard from 'expo-clipboard';
 import { useHandoffStore } from '@/store/useHandoffStore';
 import { useKeyboardRecoveryStore } from '@/store/useKeyboardRecoveryStore';
 import { useProcessingModeStore } from '@/store/useProcessingModeStore';
@@ -20,6 +19,7 @@ import {
 } from '@/services/transcription/TranscriptionService';
 import { cleanupTranscript } from '@/lib/cleanupTranscript';
 import { transcribeAndCleanup } from '@/lib/transcribeAndCleanup';
+import { gaplaBufergaQosh } from '@/lib/gaplaBufer';
 import { gaplaVaqt, gaplaVaqtBoshla } from '@/lib/gaplaVaqt';
 import { markTarjimonDeepLink } from '@/lib/tarjimonHolat';
 import { snapshotKeyboardTone, readKeyboardToneSnapshot } from '@/lib/keyboardToneSync';
@@ -501,7 +501,8 @@ export function useKeyboardHandoff() {
             AppGroupStorage.getItem(APP_GROUP_KEYS.KEYBOARD_PENDING_TRANSCRIPT))
         ) {
           writePendingTranscript(finalText, rawJobId);
-          await Clipboard.setStringAsync(finalText);
+          // G66: into the Gapla clipboard, in the background; the phone's own clipboard gets nothing.
+          void gaplaBufergaQosh(finalText);
         }
         clearKeyboardProviderRecovery(rawJobId);
       } catch (error) {
@@ -1073,7 +1074,9 @@ export function useKeyboardHandoff() {
             return;
           }
           const delivered = writePendingTranscript(finalText, jobId);
-          await Clipboard.setStringAsync(finalText);
+          // G66 (owner 2026-11-15, «Faqat Gapla buferi»): every dictation goes into the Gapla clipboard, in the
+          // background — the keyboard's clipboard page shows it; the phone's own clipboard gets nothing new.
+          void gaplaBufergaQosh(finalText);
 
           // Once the keyboard has the text, a failed history save must not keep the
           // recovery entry: its retry would repeat paid cleanup and insert the text again.

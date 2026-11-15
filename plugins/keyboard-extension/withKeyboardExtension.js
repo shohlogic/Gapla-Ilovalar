@@ -24,6 +24,8 @@ const EXTENSION_FILES = [
   { name: 'GaplaClipboard.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
   // Gapla (G41, G55): word suggestions from the owner's list on the Gapla server.
   { name: 'GaplaTavsiya.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
+  // Gapla (G56): the translator inside the keyboard and its server client.
+  { name: 'GaplaTarjimon.swift', fileType: 'sourcecode.swift', phase: 'Sources' },
 ];
 const BUILD_PHASE_ISA = {
   Sources: 'PBXSourcesBuildPhase',

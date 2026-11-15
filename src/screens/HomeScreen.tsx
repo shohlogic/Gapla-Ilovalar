@@ -33,6 +33,7 @@ import { getPreferredTranscriptionLanguage } from '@/lib/transcriptionLanguage';
 import { accountRequiredForCloud, showAccountRequiredAlert } from '@/lib/accountAccess';
 import { isMicPermissionError, isNoSpeechError, showMicPermissionAlert } from '@/lib/permissions';
 import { formatRelativeTime, safeHaptics } from '@/lib/utils';
+import { gaplaBufergaQosh } from '@/lib/gaplaBufer';
 import { BRAND, iosColor } from '@/config/colors';
 import { ProcessingWaveform } from '@/components/features/WaveformVisualizer';
 import { AppGroupStorage, APP_GROUP_KEYS } from '../../modules/app-group-storage/src';
@@ -92,6 +93,10 @@ function HandoffPhoneIllustration({ transcribing }: { transcribing: boolean }) {
   );
 }
 
+const COPIED_TOAST = 'Buferga nusxalandi';
+// G66: a dictation went into the Gapla clipboard (src/lib/gaplaBufer.ts).
+const GAPLA_BUFER_TOAST = "Gapla buferiga qo'shildi";
+
 type ModeToast = {
   text: string;
   name: string;
@@ -114,6 +119,7 @@ export default function HomeScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [showCopiedToast, setShowCopiedToast] = useState(false);
+  const [copiedToastText, setCopiedToastText] = useState(COPIED_TOAST);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [modeToast, setModeToast] = useState<ModeToast | null>(null);
   const modeToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -141,7 +147,8 @@ export default function HomeScreen() {
   const isPrivateMode = activeMode === 'private';
   const { handleUsageLimitReached, isRecoveringUsageLimit } = useUsageLimitRecovery();
 
-  const showCopied = useCallback(() => {
+  const showCopied = useCallback((text: string = COPIED_TOAST) => {
+    setCopiedToastText(text);
     setShowCopiedToast(true);
     setTimeout(() => setShowCopiedToast(false), 2500);
   }, []);
@@ -168,8 +175,11 @@ export default function HomeScreen() {
     audioRecorder,
   } = useAudioRecording({
     onComplete: (text) => {
-      Clipboard.setStringAsync(text);
-      showCopied();
+      // G66 (owner 2026-11-15, «Faqat Gapla buferi»): the dictation goes into the Gapla clipboard, not the phone's;
+      // the note shows only once the server has it.
+      void gaplaBufergaQosh(text).then((saved) => {
+        if (saved) showCopied(GAPLA_BUFER_TOAST);
+      });
       if (useProcessingModeStore.getState().activeMode === 'cloud') {
         useUsageStore.getState().load(true);
       }
@@ -730,7 +740,7 @@ export default function HomeScreen() {
         name="checkmark"
         mdName="Check"
         color="brand"
-        text="Buferga nusxalandi"
+        text={copiedToastText}
         top={insets.top + 56}
       />
 

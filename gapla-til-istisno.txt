@@ -193,3 +193,9 @@ modules/app-group-storage/ios/GaplaVaqt.swift:gapla-vaqt job=  # qurilma jurnali
 # --- Tarjimon (G56) ---
 src/lib/gaplaTarjima.ts:English  # tarjima tili o'z nomi bilan, Android tarjimonidagidek (ruscha «Русский» kabi) (G56)
 src/lib/gaplaTarjima.ts:Bearer  # Gapla serveriga kalit sarlavhasi, ekranga chiqmaydi (G56)
+src/lib/gaplaBufer.ts:Bearer  # Gapla serveriga kalit sarlavhasi, ekranga chiqmaydi (G66)
+plugins/keyboard-extension/ios/GaplaTarjimon.swift:Bearer  # HTTP sarlavhasi (G56)
+plugins/keyboard-extension/ios/GaplaTarjimon.swift:Authorization  # HTTP sarlavhasi (G56)
+plugins/keyboard-extension/ios/GaplaTarjimon.swift:Accept  # HTTP sarlavhasi (G56)
+plugins/keyboard-extension/ios/GaplaTarjimon.swift:Content-Type  # HTTP sarlavhasi (G56)
+plugins/keyboard-extension/ios/GaplaTarjimon.swift:English  # ingliz tili o'z nomi bilan, til ro'yxatida (G67 dizayni: O'zbekcha, Русский, English)
