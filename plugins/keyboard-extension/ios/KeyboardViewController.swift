@@ -3993,8 +3993,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       reason = "sahifa"
     } else if !tavsiyaShows {
       reason = "til-\(keyboardLanguage.rawValue)"
-    } else if !tavsiyaFieldAllowed {
-      reason = "maydon"
+    } else if !tavsiyaFieldShows {
+      reason = "maydon-parol"
     } else if !GaplaTavsiya.shared.hasWords {
       reason = "lugat-bosh"
     } else if !(textDocumentProxy.selectedText ?? "").isEmpty {
@@ -4014,7 +4014,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func tavsiyaItems() -> (words: [String], literal: Bool)? {
     guard hasFullAccess, recordButton.isHidden, !isAgentReviewShown, !recordingOrb.isShowing,
           layoutMode == .letters || layoutMode == .numbers || layoutMode == .symbols,
-          tavsiyaFieldAllowed, GaplaTavsiya.shared.hasWords
+          tavsiyaFieldShows, GaplaTavsiya.shared.hasWords
     else { return nil }
     let proxy = textDocumentProxy
     guard (proxy.selectedText ?? "").isEmpty,
@@ -4058,10 +4058,16 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     GaplaTavsiya.shared.start(accessGroup: "group.\(Self.resolvedContainingAppBundleID)")
   }
 
-  /// Contract rule 6: no suggestions and no counting in password, e-mail, address, number or name-and-phone fields, or
-  /// where the field turns autocorrection off — Apple's keyboard hides its suggestions there too. G62: Uzbek, Turkish
-  /// and English keyboards (tavsiyaShows); counting stays Uzbek (tavsiyaOn).
-  private var tavsiyaFieldAllowed: Bool {
+  /// Gapla (G69, owner 2026-11-15: «hamma joyda chiqsin»; in Messages the row never showed, the device log said
+  /// «maydon»): suggestions show in every field but a password one — e-mail, address, number fields and fields without
+  /// autocorrection too. G62: Uzbek, Turkish and English keyboards (tavsiyaShows).
+  private var tavsiyaFieldShows: Bool {
+    tavsiyaShows && textDocumentProxy.isSecureTextEntry != true
+  }
+
+  /// Contract rule 6: nothing is counted (learned) in password, e-mail, address, number or name-and-phone fields, or
+  /// where the field turns autocorrection off. Counting stays Uzbek (tavsiyaOn).
+  private var tavsiyaFieldCounts: Bool {
     guard tavsiyaShows else { return false }
     let proxy = textDocumentProxy
     if proxy.isSecureTextEntry == true { return false }
@@ -4083,7 +4089,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let context = GaplaTavsiya.Context(before: before)
     let partial = context?.partial ?? ""
     for _ in 0..<partial.count { proxy.deleteBackward() }
-    if hasFullAccess && tavsiyaOn && tavsiyaFieldAllowed {
+    if hasFullAccess && tavsiyaOn && tavsiyaFieldCounts {
       GaplaTavsiya.shared.countTyped(
         word,
         previous: context?.previous,
@@ -4092,7 +4098,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     }
     tavsiyaTypedWord = ""
     tavsiyaLastCounted = word
-    if proxy.documentContextAfterInput?.first == " " {
+    // G69: an e-mail or web address takes no space after the picked word.
+    let keyboardType = proxy.keyboardType ?? .default
+    if keyboardType == .emailAddress || keyboardType == .URL {
+      typeText(word)
+    } else if proxy.documentContextAfterInput?.first == " " {
       typeText(word)
       proxy.adjustTextPosition(byCharacterOffset: 1)
     } else {
@@ -4116,7 +4126,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func countTypedWordIfFinished() {
     let typed = tavsiyaTypedWord
     tavsiyaTypedWord = ""
-    guard !typed.isEmpty, hasFullAccess, tavsiyaOn, tavsiyaFieldAllowed,
+    guard !typed.isEmpty, hasFullAccess, tavsiyaOn, tavsiyaFieldCounts,
           let before = textDocumentProxy.documentContextBeforeInput,
           let context = GaplaTavsiya.Context(before: before),
           !context.partial.isEmpty,
