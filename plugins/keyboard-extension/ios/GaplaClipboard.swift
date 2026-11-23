@@ -21,6 +21,73 @@ struct GaplaClipboardItem: Codable, Equatable {
   let vaqt: Double
   let qadalgan: Bool
   let maxfiy: Bool
+  /// G73: only in a search answer, when the words lie past `boshi` — about 200 characters around them, «…» at the cut
+  /// edges. Shown in `boshi`'s place.
+  var parcha: String? = nil
+
+  func pinned(_ value: Bool) -> GaplaClipboardItem {
+    GaplaClipboardItem(
+      id: id, boshi: boshi, uzunlik: uzunlik, qurilma: qurilma, vaqt: vaqt, qadalgan: value, maxfiy: maxfiy,
+      parcha: parcha
+    )
+  }
+}
+
+/// Gapla (G73, owner 2026-11-23: [so'zlari: bilim/gapla-goyalar-royxati.md], chose «Serverdagi hammasi»): the
+/// clipboard search. The server searches every copy of the last 3 days in full; the keyboard filters the rows on hand
+/// at once while it waits. The rules are the server's and the computer's (gaplaBuferQidiruv.js): all the words, in any
+/// order; letter case and the apostrophe kind (' ʻ ‘ ’) do not matter; a secret copy is never found.
+enum GaplaBuferQidiruv {
+  /// The server takes a query up to 200 characters.
+  static let maxLength = 200
+  /// The server is asked once typing pauses this long.
+  static let delay: TimeInterval = 0.25
+
+  private static let apostrophes: Set<Character> = ["ʻ", "ʼ", "‘", "’", "`", "´", "ʹ"]
+
+  /// The first 200 characters (Python `len`, i.e. Unicode scalars, as the server counts).
+  static func limited(_ query: String) -> String {
+    String(String.UnicodeScalarView(query.unicodeScalars.prefix(maxLength)))
+  }
+
+  static func normal(_ text: String) -> String {
+    String(text.map { apostrophes.contains($0) ? "'" : $0 }).lowercased()
+  }
+
+  static func words(_ query: String) -> [String] {
+    normal(limited(query)).split(whereSeparator: { $0.isWhitespace }).map(String.init)
+  }
+
+  /// The rows on hand, filtered at once by what shows of them (the start, or the excerpt); secret ones never.
+  static func filter(_ items: [GaplaClipboardItem], query: String) -> [GaplaClipboardItem] {
+    let words = words(query)
+    guard !words.isEmpty else { return items }
+    return items.filter { item in
+      guard !item.maxfiy else { return false }
+      let text = normal(item.boshi + " " + (item.parcha ?? ""))
+      return words.allSatisfy { text.contains($0) }
+    }
+  }
+
+  /// Where the words are in `text`, as NSString ranges. None when folding the case changed the text's length (a few
+  /// letters, as Turkish İ): the row then shows unmarked rather than marked in the wrong place.
+  static func matches(in text: String, query: String) -> [NSRange] {
+    let words = words(query)
+    let original = text as NSString
+    let folded = normal(text) as NSString
+    guard !words.isEmpty, folded.length == original.length else { return [] }
+    var ranges: [NSRange] = []
+    for word in words {
+      var from = 0
+      while from < folded.length {
+        let found = folded.range(of: word, options: .literal, range: NSRange(location: from, length: folded.length - from))
+        guard found.location != NSNotFound, found.length > 0 else { break }
+        ranges.append(found)
+        from = found.location + 1
+      }
+    }
+    return ranges
+  }
 }
 
 enum GaplaClipboardError: Error {
@@ -93,6 +160,22 @@ final class GaplaClipboardClient {
     }
   }
 
+  /// G73: `GET /v1/bufer?q=<so'zlar>&soni=50` (bilim/gapla-bufer-reja.md, «Server qismi») — the same rows as the list,
+  /// with `parcha` when the words lie past the start. The task is returned so that a newer search can cancel it.
+  @discardableResult
+  func search(
+    _ query: String,
+    completion: @escaping (Result<[GaplaClipboardItem], GaplaClipboardError>) -> Void
+  ) -> URLSessionDataTask? {
+    let asked = GaplaBuferQidiruv.limited(query.trimmingCharacters(in: .whitespacesAndNewlines))
+    return send("GET", query: [URLQueryItem(name: "q", value: asked), URLQueryItem(name: "soni", value: "50")]) { result in
+      completion(result.flatMap { data -> Result<[GaplaClipboardItem], GaplaClipboardError> in
+        guard let decoded = try? JSONDecoder().decode(ListResponse.self, from: data) else { return .failure(.server) }
+        return .success(decoded.elementlar)
+      })
+    }
+  }
+
   func fullText(id: Int, completion: @escaping (Result<String, GaplaClipboardError>) -> Void) {
     send("GET", path: "\(id)") { result in
       completion(result.flatMap { data -> Result<String, GaplaClipboardError> in
@@ -118,23 +201,28 @@ final class GaplaClipboardClient {
   }
 
   /// Calls back on the main queue.
+  @discardableResult
   private func send(
     _ method: String,
     path: String? = nil,
     query: [URLQueryItem]? = nil,
     body: [String: Any]? = nil,
     completion: @escaping (Result<Data, GaplaClipboardError>) -> Void
-  ) {
+  ) -> URLSessionDataTask? {
     guard let key = serverKey() else {
       DispatchQueue.main.async { completion(.failure(.noKey)) }
-      return
+      return nil
     }
     let url = path.map { Self.baseURL.appendingPathComponent($0) } ?? Self.baseURL
     var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
     components?.queryItems = query
+    // URLComponents leaves «+» as it is, and the server would read it as a space (G73: a search for «C++»).
+    if let encoded = components?.percentEncodedQuery {
+      components?.percentEncodedQuery = encoded.replacingOccurrences(of: "+", with: "%2B")
+    }
     guard let requestURL = components?.url else {
       DispatchQueue.main.async { completion(.failure(.server)) }
-      return
+      return nil
     }
     var request = URLRequest(url: requestURL)
     request.httpMethod = method
@@ -144,7 +232,7 @@ final class GaplaClipboardClient {
       request.httpBody = try? JSONSerialization.data(withJSONObject: body)
       request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     }
-    session.dataTask(with: request) { data, response, error in
+    let task = session.dataTask(with: request) { data, response, error in
       let result: Result<Data, GaplaClipboardError>
       if error != nil {
         result = .failure(.network)
@@ -162,7 +250,9 @@ final class GaplaClipboardClient {
         result = .failure(.server)
       }
       DispatchQueue.main.async { completion(result) }
-    }.resume()
+    }
+    task.resume()
+    return task
   }
 }
 
@@ -239,9 +329,30 @@ final class GaplaClipboardStore {
 /// The clipboard page, in the letter rows' place (like the emoji page): the add button and a
 /// status line on top, the list below — newest first, pinned ones above; each row has the
 /// text's start, where and when it was copied, a pin and a delete button. Tap a row to copy it.
+///
+/// G73 (owner 2026-11-23, chose «Tarjimondek»): a search field sits between the header and the list. A tap on it opens
+/// the same panel in its `.search` mode above the toolbar, as the translator opens: the field and the rows found on
+/// top, the keys below, which type into the field (an extension cannot bring up the system keyboard). While the field
+/// is being typed in, the rows on hand are filtered at once and the server's answer replaces them 0.25 s after typing
+/// pauses; a word found is marked; an empty field shows the ordinary list. Like the computer's Option+B window
+/// (GaplaBuferOverlay.jsx), a copy closes the search.
 final class GaplaClipboardPanel: UIView, UITableViewDelegate {
+  enum Mode { case page, search }
+
+  /// The search panel's height above the toolbar — the translator's, so the keyboard grows the same way: the field and
+  /// two rows.
+  static let searchHeight: CGFloat = 150
+
   /// Plays the key click (the controller owns the input-click sound).
   var onKeyClick: (() -> Void)?
+  /// Page: the search field was tapped.
+  var onSearchTap: (() -> Void)?
+  /// Search: ✕ — back to the clipboard page.
+  var onSearchClose: (() -> Void)?
+  /// Search: the copy chosen is on the iPhone clipboard.
+  var onSearchCopied: (() -> Void)?
+  /// Search: ✕ in the field — the controller keeps the text the keys type, so it clears it.
+  var onSearchClear: (() -> Void)?
 
   // Pasteboard types password managers set on a secret copy (nspasteboard.org convention and
   // 1Password's own); reading the types does not read the text.
@@ -249,7 +360,16 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
   private static let rowHeight: CGFloat = 50
   private static let loadingText = "Yuklanmoqda…"
   private static let emptyText = "Bufer bo'sh. Biror matnni nusxalang va «Hozirgi nusxani qo'sh»ni bosing."
+  /// The computer's words (GaplaBuferOverlay.jsx).
+  private static let searchPlaceholder = "Qidirish — 3 kunlik hamma nusxa ichidan"
+  private static let notFoundNote = "3 kunlik hamma nusxa ichidan izlandi. Maxfiy nusxalar (parollar) qidiruvda chiqmaydi."
+  /// Below this the page (landscape phone, 98 pt) keeps its list rows and shows a search icon in the header instead
+  /// of the field row.
+  private static let fieldRowMinPageHeight: CGFloat = 120
+  /// A marked word further in than this starts the line a little before it, so it shows on the row's one line.
+  private static let leadKeep = 16
 
+  let mode: Mode
   private let client: GaplaClipboardClient
   private let store = GaplaClipboardStore.shared
   private let hasFullAccess: () -> Bool
@@ -264,60 +384,54 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
   private var statusTimer: Timer?
   private var dataSource: UITableViewDiffableDataSource<Int, Int>!
 
+  // G73 search state (mode .search).
+  private var query = ""
+  /// The ordinary list the search opened with: shown for an empty field, filtered at once while the server is asked.
+  private var baseList: [GaplaClipboardItem] = []
+  /// The server's last answer and the field's text it answers.
+  private var found: (query: String, items: [GaplaClipboardItem])?
+  private var searchError: GaplaClipboardError?
+  /// Deleted during this search: a late answer does not bring them back.
+  private var removedIDs = Set<Int>()
+  private var searchTimer: Timer?
+  private var searchTask: URLSessionDataTask?
+  private var searchGeneration = 0
+
   private let addButton = UIButton(type: .system)
   /// Gapla (G53, owner 2026-11-12: [so'zlari: bilim/gapla-goyalar-royxati.md]): the same refresh as on opening, at the header's right end with
   /// the same circular-arrow icon as the Android panel (ClipboardInputLayout, Icons.Default.Refresh).
   private let refreshButton = UIButton(type: .system)
   private let statusLabel = UILabel()
+  /// Page: looks like a field; a tap opens the search.
+  private let searchField = UIControl()
+  /// Page on a short keyboard: the search as an icon in the header.
+  private let searchIconButton = UIButton(type: .system)
+  /// Search: the field the keys type into, its ✕ (clear), and the panel's ✕ (close).
+  private let inputBox = UIView()
+  private let queryLabel = UILabel()
+  private let clearButton = UIButton(type: .system)
+  private let closeButton = UIButton(type: .system)
+  /// Search: notes (pinned, deleted, an error) float over the rows' bottom for 1.6 s.
+  private let toastView = UIView()
   private let tableView = UITableView(frame: .zero, style: .plain)
   private let emptyLabel = UILabel()
 
-  init(client: GaplaClipboardClient, hasFullAccess: @escaping () -> Bool, rowBackground: UIColor, textColor: UIColor, accent: UIColor) {
+  init(
+    mode: Mode = .page,
+    pageHeight: CGFloat = 0,
+    client: GaplaClipboardClient,
+    hasFullAccess: @escaping () -> Bool,
+    rowBackground: UIColor,
+    textColor: UIColor,
+    accent: UIColor
+  ) {
+    self.mode = mode
     self.client = client
     self.hasFullAccess = hasFullAccess
     self.rowBackground = rowBackground
     self.textColor = textColor
     self.accent = accent
     super.init(frame: .zero)
-
-    var config = UIButton.Configuration.filled()
-    config.title = "Hozirgi nusxani qo'sh"
-    config.image = UIImage(systemName: "plus")
-    config.imagePadding = 6
-    config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-    config.baseBackgroundColor = rowBackground
-    config.baseForegroundColor = textColor
-    config.cornerStyle = .capsule
-    config.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 14)
-    config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
-      var attributes = attributes
-      attributes.font = UIFont.systemFont(ofSize: 14, weight: .medium)
-      return attributes
-    }
-    addButton.configuration = config
-    addButton.accessibilityLabel = "Hozirgi nusxani qo'shish"
-    addButton.addTarget(self, action: #selector(handleAddTapped), for: .touchUpInside)
-    addButton.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(addButton)
-
-    var refreshConfig = UIButton.Configuration.plain()
-    refreshConfig.image = UIImage(systemName: "arrow.clockwise")
-    refreshConfig.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-    refreshConfig.baseForegroundColor = textColor
-    refreshConfig.contentInsets = .zero
-    refreshButton.configuration = refreshConfig
-    refreshButton.accessibilityLabel = "Yangilash"
-    refreshButton.addTarget(self, action: #selector(handleRefreshTapped), for: .touchUpInside)
-    refreshButton.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(refreshButton)
-
-    statusLabel.font = UIFont.systemFont(ofSize: 13, weight: .medium)
-    statusLabel.textColor = .secondaryLabel
-    statusLabel.textAlignment = .right
-    statusLabel.adjustsFontSizeToFitWidth = true
-    statusLabel.minimumScaleFactor = 0.8
-    statusLabel.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(statusLabel)
 
     tableView.backgroundColor = .clear
     tableView.separatorStyle = .none
@@ -340,13 +454,64 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
     tableView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(tableView)
 
-    emptyLabel.font = UIFont.systemFont(ofSize: 14)
-    emptyLabel.textColor = .secondaryLabel
     emptyLabel.textAlignment = .center
     emptyLabel.numberOfLines = 0
     emptyLabel.isHidden = true
     emptyLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(emptyLabel)
+
+    NSLayoutConstraint.activate([
+      tableView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      tableView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      tableView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+      emptyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+      emptyLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+      emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
+    ])
+
+    switch mode {
+    case .page: buildPageHeader(fieldRow: pageHeight <= 0 || pageHeight >= Self.fieldRowMinPageHeight)
+    case .search: buildSearchRow()
+    }
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  private func buildPageHeader(fieldRow: Bool) {
+    var config = UIButton.Configuration.filled()
+    config.title = "Hozirgi nusxani qo'sh"
+    config.image = UIImage(systemName: "plus")
+    config.imagePadding = 6
+    config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+    config.baseBackgroundColor = rowBackground
+    config.baseForegroundColor = textColor
+    config.cornerStyle = .capsule
+    config.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 14)
+    config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+      var attributes = attributes
+      attributes.font = UIFont.systemFont(ofSize: 14, weight: .medium)
+      return attributes
+    }
+    addButton.configuration = config
+    addButton.accessibilityLabel = "Hozirgi nusxani qo'shish"
+    addButton.addTarget(self, action: #selector(handleAddTapped), for: .touchUpInside)
+    addButton.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(addButton)
+
+    configureHeaderIcon(refreshButton, systemImage: "arrow.clockwise", label: "Yangilash")
+    refreshButton.addTarget(self, action: #selector(handleRefreshTapped), for: .touchUpInside)
+
+    statusLabel.font = UIFont.systemFont(ofSize: 13, weight: .medium)
+    statusLabel.textColor = .secondaryLabel
+    statusLabel.textAlignment = .right
+    statusLabel.adjustsFontSizeToFitWidth = true
+    statusLabel.minimumScaleFactor = 0.8
+    statusLabel.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(statusLabel)
+    statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
     NSLayoutConstraint.activate([
       addButton.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -359,24 +524,188 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
       refreshButton.heightAnchor.constraint(equalToConstant: 30),
 
       statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: addButton.trailingAnchor, constant: 8),
-      statusLabel.trailingAnchor.constraint(equalTo: refreshButton.leadingAnchor, constant: -4),
       statusLabel.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
-
-      tableView.leadingAnchor.constraint(equalTo: leadingAnchor),
-      tableView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      tableView.topAnchor.constraint(equalTo: addButton.bottomAnchor, constant: 6),
-      tableView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-      emptyLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-      emptyLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-      emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
     ])
-    statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+    guard fieldRow else {
+      configureHeaderIcon(searchIconButton, systemImage: "magnifyingglass", label: "Buferdan qidirish")
+      searchIconButton.addTarget(self, action: #selector(handleSearchFieldTapped), for: .touchUpInside)
+      NSLayoutConstraint.activate([
+        searchIconButton.trailingAnchor.constraint(equalTo: refreshButton.leadingAnchor),
+        searchIconButton.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
+        searchIconButton.widthAnchor.constraint(equalToConstant: 36),
+        searchIconButton.heightAnchor.constraint(equalToConstant: 30),
+        statusLabel.trailingAnchor.constraint(equalTo: searchIconButton.leadingAnchor, constant: -4),
+        tableView.topAnchor.constraint(equalTo: addButton.bottomAnchor, constant: 6),
+      ])
+      return
+    }
+
+    searchField.backgroundColor = rowBackground
+    searchField.layer.cornerRadius = 8
+    searchField.layer.cornerCurve = .continuous
+    searchField.isAccessibilityElement = true
+    searchField.accessibilityLabel = "Buferdan qidirish"
+    searchField.accessibilityTraits = .button
+    searchField.addTarget(self, action: #selector(handleSearchFieldTapped), for: .touchUpInside)
+    searchField.addTarget(self, action: #selector(handleSearchFieldPressed), for: [.touchDown, .touchDragEnter])
+    searchField.addTarget(
+      self, action: #selector(handleSearchFieldReleased), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit]
+    )
+    searchField.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(searchField)
+
+    let icon = makeSearchIcon()
+    searchField.addSubview(icon)
+    let hint = UILabel()
+    hint.text = Self.searchPlaceholder
+    hint.font = UIFont.systemFont(ofSize: 14)
+    hint.textColor = .placeholderText
+    hint.lineBreakMode = .byTruncatingTail
+    hint.translatesAutoresizingMaskIntoConstraints = false
+    searchField.addSubview(hint)
+
+    NSLayoutConstraint.activate([
+      statusLabel.trailingAnchor.constraint(equalTo: refreshButton.leadingAnchor, constant: -4),
+
+      searchField.leadingAnchor.constraint(equalTo: leadingAnchor),
+      searchField.trailingAnchor.constraint(equalTo: trailingAnchor),
+      searchField.topAnchor.constraint(equalTo: addButton.bottomAnchor, constant: 5),
+      searchField.heightAnchor.constraint(equalToConstant: 30),
+
+      icon.leadingAnchor.constraint(equalTo: searchField.leadingAnchor, constant: 10),
+      icon.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+      hint.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+      hint.trailingAnchor.constraint(lessThanOrEqualTo: searchField.trailingAnchor, constant: -10),
+      hint.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+
+      tableView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 5),
+    ])
   }
 
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
+  private func buildSearchRow() {
+    inputBox.backgroundColor = rowBackground
+    inputBox.layer.cornerRadius = 10
+    inputBox.layer.cornerCurve = .continuous
+    inputBox.layer.borderWidth = 1.5
+    inputBox.layer.borderColor = accent.resolvedColor(with: traitCollection).cgColor
+    inputBox.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(inputBox)
+
+    let icon = makeSearchIcon()
+    inputBox.addSubview(icon)
+
+    queryLabel.font = UIFont.systemFont(ofSize: 16)
+    queryLabel.numberOfLines = 1
+    queryLabel.translatesAutoresizingMaskIntoConstraints = false
+    inputBox.addSubview(queryLabel)
+
+    clearButton.setImage(
+      UIImage(systemName: "xmark.circle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)),
+      for: .normal
+    )
+    clearButton.tintColor = .tertiaryLabel
+    clearButton.accessibilityLabel = "Qidiruvni tozalash"
+    clearButton.addTarget(self, action: #selector(handleClearTapped), for: .touchUpInside)
+    clearButton.translatesAutoresizingMaskIntoConstraints = false
+    inputBox.addSubview(clearButton)
+
+    // The translator's ✕ (GaplaTarjimonPanel): a 44 pt circle.
+    closeButton.setImage(
+      UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)),
+      for: .normal
+    )
+    closeButton.tintColor = textColor
+    closeButton.backgroundColor = rowBackground
+    closeButton.layer.cornerRadius = 22
+    closeButton.accessibilityLabel = "Qidiruvni yopish"
+    closeButton.addTarget(self, action: #selector(handleCloseTapped), for: .touchUpInside)
+    closeButton.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(closeButton)
+
+    toastView.backgroundColor = textColor.withAlphaComponent(0.88)
+    toastView.layer.cornerRadius = 14
+    toastView.layer.cornerCurve = .continuous
+    toastView.isHidden = true
+    toastView.isUserInteractionEnabled = false
+    toastView.translatesAutoresizingMaskIntoConstraints = false
+    statusLabel.font = UIFont.systemFont(ofSize: 13, weight: .medium)
+    statusLabel.textColor = .systemBackground
+    statusLabel.textAlignment = .center
+    statusLabel.numberOfLines = 2
+    statusLabel.translatesAutoresizingMaskIntoConstraints = false
+    toastView.addSubview(statusLabel)
+    addSubview(toastView)
+
+    NSLayoutConstraint.activate([
+      inputBox.leadingAnchor.constraint(equalTo: leadingAnchor),
+      inputBox.topAnchor.constraint(equalTo: topAnchor),
+      inputBox.heightAnchor.constraint(equalToConstant: 44),
+      inputBox.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -6),
+
+      closeButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+      closeButton.centerYAnchor.constraint(equalTo: inputBox.centerYAnchor),
+      closeButton.widthAnchor.constraint(equalToConstant: 44),
+      closeButton.heightAnchor.constraint(equalToConstant: 44),
+
+      icon.leadingAnchor.constraint(equalTo: inputBox.leadingAnchor, constant: 11),
+      icon.centerYAnchor.constraint(equalTo: inputBox.centerYAnchor),
+      queryLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+      queryLabel.trailingAnchor.constraint(equalTo: clearButton.leadingAnchor, constant: -2),
+      queryLabel.centerYAnchor.constraint(equalTo: inputBox.centerYAnchor),
+
+      clearButton.trailingAnchor.constraint(equalTo: inputBox.trailingAnchor, constant: -2),
+      clearButton.centerYAnchor.constraint(equalTo: inputBox.centerYAnchor),
+      clearButton.widthAnchor.constraint(equalToConstant: 36),
+      clearButton.heightAnchor.constraint(equalToConstant: 44),
+
+      tableView.topAnchor.constraint(equalTo: inputBox.bottomAnchor, constant: 6),
+
+      toastView.centerXAnchor.constraint(equalTo: tableView.centerXAnchor),
+      toastView.bottomAnchor.constraint(equalTo: tableView.bottomAnchor, constant: -6),
+      toastView.widthAnchor.constraint(lessThanOrEqualTo: tableView.widthAnchor, constant: -24),
+      statusLabel.leadingAnchor.constraint(equalTo: toastView.leadingAnchor, constant: 14),
+      statusLabel.trailingAnchor.constraint(equalTo: toastView.trailingAnchor, constant: -14),
+      statusLabel.topAnchor.constraint(equalTo: toastView.topAnchor, constant: 6),
+      statusLabel.bottomAnchor.constraint(equalTo: toastView.bottomAnchor, constant: -6),
+    ])
+    refreshQueryRow()
   }
+
+  private func makeSearchIcon() -> UIImageView {
+    let icon = UIImageView(image: UIImage(
+      systemName: "magnifyingglass",
+      withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+    ))
+    icon.tintColor = .secondaryLabel
+    icon.isUserInteractionEnabled = false
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    icon.setContentHuggingPriority(.required, for: .horizontal)
+    return icon
+  }
+
+  private func configureHeaderIcon(_ button: UIButton, systemImage: String, label: String) {
+    var config = UIButton.Configuration.plain()
+    config.image = UIImage(systemName: systemImage)
+    config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+    config.baseForegroundColor = textColor
+    config.contentInsets = .zero
+    button.configuration = config
+    button.accessibilityLabel = label
+    button.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(button)
+  }
+
+  override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    super.traitCollectionDidChange(previousTraitCollection)
+    // A layer colour does not follow light and dark by itself.
+    if mode == .search {
+      inputBox.layer.borderColor = accent.resolvedColor(with: traitCollection).cgColor
+    }
+  }
+
+  /// The list showing on the page, for the search to start from; nil before one has shown.
+  var listShown: [GaplaClipboardItem]? { hasList ? items : nil }
 
   /// Shows the list the keyboard saved, without asking the server — for a page built without a
   /// tap on the button (a rebuild on rotation).
@@ -398,13 +727,19 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
       return
     }
     if hasList {
-      // Redraws the rows so "5 daq oldin" is current.
-      apply(items, empty: Self.emptyText, animated: false, redrawAll: true)
+      // Redraws the rows so "5 daq oldin" is current. The saved list, when there is one, also has what a search
+      // deleted (G73).
+      apply(store.savedList() ?? items, empty: Self.emptyText, animated: false, redrawAll: true)
     } else {
       showSaved()
     }
     tableView.setContentOffset(.zero, animated: false)
     refresh()
+  }
+
+  /// A short note in the status place, cleared after 1.6 s.
+  func showNote(_ text: String) {
+    setStatus(text, flash: true)
   }
 
   private func showNoFullAccess() {
@@ -425,6 +760,7 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
 
   /// Asks the server for the list and puts it in place of the one showing, then saves it.
   private func refresh() {
+    guard mode == .page else { return }
     loadGeneration += 1
     let generation = loadGeneration
     let showsLoading = !hasList
@@ -454,8 +790,10 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
   }
 
   /// Puts `list` on screen. Rows that stay keep their place; only new, gone, moved and changed
-  /// rows change — no reload of the whole table, no jump to the top.
-  private func apply(_ list: [GaplaClipboardItem], empty: String, animated: Bool, redrawAll: Bool = false) {
+  /// rows change — no reload of the whole table, no jump to the top. `note` goes in small print under `empty`.
+  private func apply(
+    _ list: [GaplaClipboardItem], empty: String, note: String? = nil, animated: Bool, redrawAll: Bool = false
+  ) {
     var seen = Set<Int>()
     let list = list.filter { seen.insert($0.id).inserted } // the table needs each id once
     var before: [Int: GaplaClipboardItem] = [:]
@@ -470,21 +808,194 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
     }.map { $0.id }
     if !redraw.isEmpty { snapshot.reconfigureItems(redraw) }
     dataSource.apply(snapshot, animatingDifferences: animated)
-    emptyLabel.text = empty
+
+    let centred = NSMutableParagraphStyle()
+    centred.alignment = .center
+    let message = NSMutableAttributedString(string: empty, attributes: [
+      .font: UIFont.systemFont(ofSize: 14, weight: note == nil ? .regular : .semibold),
+      .foregroundColor: note == nil ? UIColor.secondaryLabel : textColor,
+      .paragraphStyle: centred,
+    ])
+    if let note {
+      message.append(NSAttributedString(string: "\n" + note, attributes: [
+        .font: UIFont.systemFont(ofSize: 12),
+        .foregroundColor: UIColor.secondaryLabel,
+        .paragraphStyle: centred,
+      ]))
+    }
+    emptyLabel.attributedText = message
     emptyLabel.isHidden = !list.isEmpty
   }
 
-  /// A short note on the right of the add button; `flash` clears it after 1.6 s.
+  /// A short note — on the page right of the add button, in the search over the rows; `flash` clears it after 1.6 s.
   private func setStatus(_ text: String?, flash: Bool) {
     statusTimer?.invalidate()
     statusTimer = nil
     statusLabel.text = text
+    if mode == .search { toastView.isHidden = text == nil }
     guard flash, text != nil else { return }
     let timer = Timer(timeInterval: 1.6, repeats: false) { [weak self] _ in
-      self?.statusLabel.text = nil
+      self?.setStatus(nil, flash: false)
     }
     RunLoop.main.add(timer, forMode: .common)
     statusTimer = timer
+  }
+
+  // MARK: Search (G73)
+
+  /// The search opens with an empty field and the ordinary list — the page's, or the one saved.
+  func beginSearch(list: [GaplaClipboardItem]?) {
+    endSearch()
+    query = ""
+    found = nil
+    searchError = nil
+    removedIDs = []
+    baseList = list ?? store.savedList() ?? []
+    setStatus(nil, flash: false)
+    refreshQueryRow()
+    render()
+    tableView.setContentOffset(.zero, animated: false)
+  }
+
+  /// Nothing asked or waited for any more.
+  func endSearch() {
+    searchTimer?.invalidate()
+    searchTimer = nil
+    searchTask?.cancel()
+    searchTask = nil
+    searchGeneration += 1
+  }
+
+  /// What the keys have typed: the rows on hand are filtered at once, the server is asked once typing pauses.
+  func setQuery(_ text: String) {
+    guard mode == .search else { return }
+    query = text
+    refreshQueryRow()
+    endSearch()
+    searchError = nil
+    if GaplaBuferQidiruv.words(text).isEmpty {
+      found = nil
+    } else {
+      let timer = Timer(timeInterval: GaplaBuferQidiruv.delay, repeats: false) { [weak self] _ in
+        self?.runSearch()
+      }
+      RunLoop.main.add(timer, forMode: .common)
+      searchTimer = timer
+    }
+    render()
+    tableView.setContentOffset(.zero, animated: false)
+  }
+
+  /// The return key: the server is asked without waiting.
+  func searchNow() {
+    guard mode == .search, !GaplaBuferQidiruv.words(query).isEmpty else { return }
+    runSearch()
+  }
+
+  private func runSearch() {
+    endSearch()
+    let generation = searchGeneration
+    let asked = query
+    searchTask = client.search(asked) { [weak self] result in
+      guard let self, generation == self.searchGeneration else { return }
+      self.searchTask = nil
+      switch result {
+      case .success(let list):
+        self.found = (asked, list.filter { !self.removedIDs.contains($0.id) })
+        self.searchError = nil
+        self.render()
+      case .failure(let error):
+        // The rows filtered on hand stay; the note says why nothing more came.
+        self.searchError = error
+        self.render()
+        if !self.items.isEmpty { self.setStatus(error.message, flash: true) }
+      }
+    }
+  }
+
+  private func render() {
+    let words = GaplaBuferQidiruv.words(query)
+    if words.isEmpty {
+      apply(baseList.filter { !removedIDs.contains($0.id) }, empty: Self.emptyText, animated: false, redrawAll: true)
+      return
+    }
+    if let found, found.query == query {
+      let shown = query.trimmingCharacters(in: .whitespacesAndNewlines)
+      apply(found.items, empty: "«\(shown)» topilmadi", note: Self.notFoundNote, animated: false, redrawAll: true)
+      return
+    }
+    // Until the server answers: the last answer and the ordinary list together, so the rows do not jump.
+    let pool = found.map { Self.merged($0.items, baseList) } ?? baseList
+    let shown = GaplaBuferQidiruv.filter(pool.filter { !removedIDs.contains($0.id) }, query: query)
+    apply(shown, empty: searchError?.message ?? "Qidirilmoqda…", animated: false, redrawAll: true)
+  }
+
+  /// Pinned first, then the latest — the server's order.
+  private static func merged(_ first: [GaplaClipboardItem], _ second: [GaplaClipboardItem]) -> [GaplaClipboardItem] {
+    let seen = Set(first.map { $0.id })
+    return (first + second.filter { !seen.contains($0.id) }).sorted { a, b in
+      if a.qadalgan != b.qadalgan { return a.qadalgan }
+      return a.vaqt > b.vaqt
+    }
+  }
+
+  /// The typed text and an accent caret at its end, as the translator shows it; the placeholder after the caret.
+  private func refreshQueryRow() {
+    let shown = NSMutableAttributedString()
+    let caret = NSAttributedString(string: "|", attributes: [.foregroundColor: accent])
+    if query.isEmpty {
+      shown.append(caret)
+      shown.append(NSAttributedString(string: Self.searchPlaceholder, attributes: [.foregroundColor: UIColor.placeholderText]))
+      queryLabel.lineBreakMode = .byTruncatingTail
+    } else {
+      shown.append(NSAttributedString(string: query, attributes: [.foregroundColor: textColor]))
+      shown.append(caret)
+      // The end being typed stays in sight.
+      queryLabel.lineBreakMode = .byTruncatingHead
+    }
+    queryLabel.attributedText = shown
+    queryLabel.accessibilityLabel = query.isEmpty ? Self.searchPlaceholder : query
+    clearButton.isHidden = query.isEmpty
+  }
+
+  @objc private func handleSearchFieldPressed() { searchField.alpha = 0.6 }
+  @objc private func handleSearchFieldReleased() { searchField.alpha = 1 }
+
+  @objc private func handleSearchFieldTapped() {
+    onKeyClick?()
+    guard hasFullAccess() else {
+      setStatus("To'liq kirish kerak", flash: true)
+      return
+    }
+    onSearchTap?()
+  }
+
+  /// ✕ in the field: the text goes, the ordinary list comes back; the keys keep typing here.
+  @objc private func handleClearTapped() {
+    onKeyClick?()
+    onSearchClear?()
+  }
+
+  @objc private func handleCloseTapped() {
+    onKeyClick?()
+    onSearchClose?()
+  }
+
+  /// G73: a change made in the search (pinned) shows in its rows at once, without asking again.
+  private func replaceInSearch(_ item: GaplaClipboardItem) {
+    baseList = baseList.map { $0.id == item.id ? item : $0 }
+    if let found {
+      self.found = (found.query, found.items.map { $0.id == item.id ? item : $0 })
+    }
+    render()
+  }
+
+  private func dropInSearch(_ id: Int) {
+    removedIDs.insert(id)
+    if let saved = store.savedList(), saved.contains(where: { $0.id == id }) {
+      store.saveList(saved.filter { $0.id != id })
+    }
+    render()
   }
 
   // MARK: Actions
@@ -527,7 +1038,7 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
     onKeyClick?()
     if let text = store.fullText(for: item) {
       UIPasteboard.general.string = text
-      setStatus("Nusxalandi", flash: true)
+      copied()
       return
     }
     setStatus("Olinmoqda…", flash: false)
@@ -537,13 +1048,22 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
       case .success(let text):
         self.store.storeFullText(text, for: item)
         UIPasteboard.general.string = text
-        self.setStatus("Nusxalandi", flash: true)
+        self.copied()
       case .failure(.notFound):
         self.setStatus(GaplaClipboardError.notFound.message, flash: true)
-        self.refresh()
+        if self.mode == .search { self.dropInSearch(item.id) } else { self.refresh() }
       case .failure(let error):
         self.setStatus(error.message, flash: true)
       }
+    }
+  }
+
+  private func copied() {
+    if mode == .search {
+      setStatus(nil, flash: false)
+      onSearchCopied?()
+    } else {
+      setStatus("Nusxalandi", flash: true)
     }
   }
 
@@ -553,11 +1073,13 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
       guard let self else { return }
       switch result {
       case .success:
-        self.refresh()
+        if self.mode == .search { self.replaceInSearch(item.pinned(!item.qadalgan)) } else { self.refresh() }
         self.setStatus(item.qadalgan ? "Qadash olindi" : "Qadaldi", flash: true)
       case .failure(let error):
         self.setStatus(error.message, flash: true)
-        if case .notFound = error { self.refresh() }
+        if case .notFound = error {
+          if self.mode == .search { self.dropInSearch(item.id) } else { self.refresh() }
+        }
       }
     }
   }
@@ -568,11 +1090,15 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
       guard let self else { return }
       switch result {
       case .success, .failure(.notFound):
-        // A list asked for before the delete would bring the row back.
-        self.loadGeneration += 1
-        let remaining = self.items.filter { $0.id != item.id }
-        self.store.saveList(remaining)
-        self.apply(remaining, empty: "Bufer bo'sh.", animated: true)
+        if self.mode == .search {
+          self.dropInSearch(item.id)
+        } else {
+          // A list asked for before the delete would bring the row back.
+          self.loadGeneration += 1
+          let remaining = self.items.filter { $0.id != item.id }
+          self.store.saveList(remaining)
+          self.apply(remaining, empty: "Bufer bo'sh.", animated: true)
+        }
         self.setStatus("O'chirildi", flash: true)
       case .failure(let error):
         self.setStatus(error.message, flash: true)
@@ -583,8 +1109,11 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
   // MARK: Table
 
   private func configure(_ cell: GaplaClipboardCell, with item: GaplaClipboardItem) {
+    let searching = mode == .search && !GaplaBuferQidiruv.words(query).isEmpty
+    let line = searching ? Self.searchPreview(item, query: query) : (text: Self.preview(item), marks: [])
     cell.configure(
-      preview: Self.preview(item),
+      preview: line.text,
+      marks: line.marks,
       detail: Self.detail(item),
       pinned: item.qadalgan,
       secret: item.maxfiy,
@@ -604,15 +1133,38 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
     copy(item)
   }
 
-  /// One line: line breaks and runs of spaces become single spaces. A secret copy is shown
-  /// exactly as the server masks it (owner chose [so'zlari: bilim/gapla-goyalar-royxati.md], 2026-11-11: `●●●●●●●●`).
+  /// One line: line breaks and runs of spaces become single spaces.
+  private static func flat(_ text: String) -> String {
+    text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+  }
+
+  /// A secret copy is shown exactly as the server masks it (owner chose [so'zlari: bilim/gapla-goyalar-royxati.md], 2026-11-11: `●●●●●●●●`).
   private static func preview(_ item: GaplaClipboardItem) -> String {
     if item.maxfiy { return item.boshi }
-    let flat = item.boshi
-      .components(separatedBy: .whitespacesAndNewlines)
-      .filter { !$0.isEmpty }
-      .joined(separator: " ")
+    let flat = flat(item.boshi)
     return item.uzunlik > item.boshi.unicodeScalars.count ? flat + "…" : flat
+  }
+
+  /// G73: the server's excerpt in the start's place, the words found marked. A word deep in the line moves the line's
+  /// start to a little before it («…» in front), so it shows on the row's one line.
+  private static func searchPreview(_ item: GaplaClipboardItem, query: String) -> (text: String, marks: [NSRange]) {
+    let text: String
+    if let parcha = item.parcha, !parcha.isEmpty {
+      text = flat(parcha)
+    } else {
+      text = preview(item)
+    }
+    let marks = GaplaBuferQidiruv.matches(in: text, query: query)
+    guard let first = marks.map({ $0.location }).min(), first > leadKeep else { return (text, marks) }
+    let ns = text as NSString
+    var start = first - leadKeep
+    // From the start of a word when one begins near.
+    let space = ns.rangeOfCharacter(from: .whitespaces, options: [], range: NSRange(location: start, length: first - start))
+    if space.location != NSNotFound, space.location + 1 < first { start = space.location + 1 }
+    start = ns.rangeOfComposedCharacterSequence(at: start).location
+    let shift = start - 1 // «…» is one UTF-16 unit
+    let cut = "…" + ns.substring(from: start)
+    return (cut, marks.map { NSRange(location: $0.location - shift, length: $0.length) })
   }
 
   /// "iPhone · 5 daq oldin · 1240 belgi" (owner's ask: which device, when). A secret copy shows
@@ -714,8 +1266,10 @@ private final class GaplaClipboardCell: UITableViewCell {
     onDelete = nil
   }
 
+  /// `marks` (G73): the words a search found, as NSString ranges of `preview` — on the computer's look, a soft accent
+  /// behind them.
   func configure(
-    preview: String, detail: String, pinned: Bool, secret: Bool,
+    preview: String, marks: [NSRange], detail: String, pinned: Bool, secret: Bool,
     background: UIColor, textColor: UIColor, accent: UIColor
   ) {
     card.backgroundColor = background
@@ -733,9 +1287,20 @@ private final class GaplaClipboardCell: UITableViewCell {
       let line = NSMutableAttributedString(attachment: attachment)
       line.append(NSAttributedString(string: " " + preview))
       previewLabel.attributedText = line
+    } else if !marks.isEmpty {
+      let line = NSMutableAttributedString(string: preview, attributes: [
+        .font: previewLabel.font ?? UIFont.systemFont(ofSize: 15),
+        .foregroundColor: textColor,
+      ])
+      let markColour = accent.resolvedColor(with: traitCollection).withAlphaComponent(0.28)
+      for range in marks where NSMaxRange(range) <= line.length {
+        line.addAttribute(.backgroundColor, value: markColour, range: range)
+      }
+      previewLabel.attributedText = line
     } else {
       previewLabel.attributedText = nil
       previewLabel.text = preview
+      previewLabel.textColor = textColor
     }
     detailLabel.text = detail
     pinButton.setImage(UIImage(systemName: pinned ? "pin.fill" : "pin"), for: .normal)

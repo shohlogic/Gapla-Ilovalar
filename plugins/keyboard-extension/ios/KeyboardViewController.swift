@@ -1522,6 +1522,26 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var translatorExtraHeight: CGFloat {
     isTranslatorOpen ? GaplaTarjimonPanel.height + rootStack.spacing : 0
   }
+  /// Gapla (G73, owner 2026-11-23: [so'zlari: bilim/gapla-goyalar-royxati.md], chose «Tarjimondek»): the clipboard
+  /// search above the toolbar, opened from the clipboard page's field, as the translator opens. Non-nil while it is
+  /// open: the keys and dictation then write into this text instead of the field.
+  private var clipboardSearchText: String?
+  private var clipboardSearchInstalled = false
+  private lazy var clipboardClient = GaplaClipboardClient(accessGroup: "group.\(Self.resolvedContainingAppBundleID)")
+  private lazy var clipboardSearchPanel = GaplaClipboardPanel(
+    mode: .search,
+    client: clipboardClient,
+    hasFullAccess: { [weak self] in self?.hasFullAccess ?? false },
+    rowBackground: Palette.keyBackground,
+    textColor: Palette.keyText,
+    accent: Palette.accentTint
+  )
+  private var isClipboardSearchOpen: Bool { clipboardSearchText != nil }
+  private var clipboardSearchExtraHeight: CGFloat {
+    isClipboardSearchOpen ? GaplaClipboardPanel.searchHeight + rootStack.spacing : 0
+  }
+  /// The translator or the clipboard search, whichever is open above the toolbar.
+  private var topPanelExtraHeight: CGFloat { translatorExtraHeight + clipboardSearchExtraHeight }
   // The current recording is an agent instruction (spoken → generated), so its
   // canvas header and post-stop state differ from normal dictation. Set when the
   // agent button starts recording in place; cleared on reset/exit.
@@ -1637,7 +1657,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private func applyKeyboardHeight() {
     // The keys keep their height at the bottom; the card above them takes the extra.
     let showsCardHeight = isAgentReviewShown || isAgentActionInFlight
-    let keyboardHeight = metrics.keyboardHeight + translatorExtraHeight
+    let keyboardHeight = metrics.keyboardHeight + topPanelExtraHeight
       + (showsCardHeight ? Metrics.agentReviewExtraHeight : 0)
 
     if let keyboardHeightConstraint {
@@ -1726,8 +1746,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
     logRecordMarker("viewWillDisappear")
-    // G56: an open translator does not come back with the next field.
+    // G56: an open translator does not come back with the next field. G73: nor does the clipboard search.
     closeTranslator()
+    closeClipboardSearch(showPage: false)
     resetRecordingOrbImmediately()
     // Gapla (G8): the clipboard list is never left open to go stale; it reloads when reopened.
     if layoutMode == .clipboard { returnToLetters() }
@@ -1918,6 +1939,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   @objc private func handleBackspaceTapped() {
     playKeyClick()
+    if isClipboardSearchOpen {
+      deleteFromClipboardSearch(word: false)
+      return
+    }
     if isTranslatorOpen {
       deleteFromTranslator(word: false)
       return
@@ -1985,8 +2010,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     let x = gesture.location(in: view).x
     switch gesture.state {
     case .began:
-      // G56: the translator's line has no cursor to move.
-      if isTranslatorOpen { return }
+      // G56: the translator's line has no cursor to move. G73: nor has the clipboard search's.
+      if isTranslatorOpen || isClipboardSearchOpen { return }
       spaceCursorActive = true
       spaceCursorLastX = x
       // The cursor leaves the word: it no longer counts as typed here.
@@ -2050,8 +2075,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   private func applyDoubleSpacePeriod() -> Bool {
-    // G56: the translator's text is not the field's.
-    if isTranslatorOpen { return false }
+    // G56: the translator's text is not the field's. G73: nor is the clipboard search's.
+    if isTranslatorOpen || isClipboardSearchOpen { return false }
     // Space over a selection replaces it with a space, never ". ".
     guard (textDocumentProxy.selectedText ?? "").isEmpty else { return false }
     let context = textDocumentProxy.documentContextBeforeInput ?? ""
@@ -2099,6 +2124,12 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   @objc private func handleReturnTapped() {
+    // G73: the search key asks the server at once, without the 0.25 s wait.
+    if isClipboardSearchOpen {
+      playKeyClick()
+      clipboardSearchPanel.searchNow()
+      return
+    }
     // G56: a line break in the translator's text, whatever the field allows.
     if isTranslatorOpen {
       playKeyClick()
@@ -3061,6 +3092,11 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   private func typeText(_ text: String) {
+    // G73: while the clipboard search is open the keys type into it.
+    if isClipboardSearchOpen {
+      appendToClipboardSearch(text)
+      return
+    }
     // G56: while the translator is open the keys type into its text, not the field.
     if isTranslatorOpen {
       appendToTranslator(text)
@@ -3306,6 +3342,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   }
 
   private func openTranslator() {
+    // G73: one panel above the toolbar at a time.
+    closeClipboardSearch(showPage: false)
     installTranslatorViewsIfNeeded()
     if layoutMode != .letters { returnToLetters() }
     translatorText = ""
@@ -3313,7 +3351,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     translatorPanel.reset()
     translatorPanel.isHidden = false
     showTranslatorResults(false)
-    applyTranslatorHeight()
+    applyTopPanelHeight()
     refreshTranslateButton()
     refreshTavsiya()
   }
@@ -3327,13 +3365,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       translatorPanel.isHidden = true
       showTranslatorResults(false)
     }
-    applyTranslatorHeight()
+    applyTopPanelHeight()
     refreshTranslateButton()
     refreshTavsiya()
   }
 
-  private func applyTranslatorHeight() {
-    rootHeightConstraint?.constant = metrics.keyboardHeight + translatorExtraHeight
+  private func applyTopPanelHeight() {
+    rootHeightConstraint?.constant = metrics.keyboardHeight + topPanelExtraHeight
     applyKeyboardHeight()
   }
 
@@ -3725,7 +3763,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     if metricsChanged {
       metrics = nextMetrics
       applyRootPadding()
-      rootHeightConstraint?.constant = metrics.keyboardHeight + translatorExtraHeight
+      rootHeightConstraint?.constant = metrics.keyboardHeight + topPanelExtraHeight
       [keyboardRowsStack, lettersRowsStack, numbersRowsStack, symbolsRowsStack, emojiRowsStack, clipboardRowsStack].forEach {
         $0.spacing = metrics.rowGap
       }
@@ -3769,7 +3807,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     emojiRowsStack.isHidden = layoutMode != .emoji
     emojiButton?.isLongPressed = layoutMode == .emoji
     clipboardRowsStack.isHidden = layoutMode != .clipboard
-    clipboardButton.isLongPressed = layoutMode == .clipboard
+    // G73: lit while the clipboard search is open too — a tap closes it.
+    clipboardButton.isLongPressed = layoutMode == .clipboard || isClipboardSearchOpen
     let modeLabel = layoutMode == .letters ? metrics.keycaps.label123 : metrics.keycaps.labelABC
     // G46: the iPad's letters page says ".?123", as Apple's; the phone's says "123".
     let numbersTitle = builtForTablet ? ".?123" : "123"
@@ -3924,19 +3963,23 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // MARK: Gapla shared clipboard (G8)
 
   private func addClipboardPage(to stack: UIStackView) {
+    let pageHeight = 3 * metrics.keyHeight + 2 * metrics.rowGap
     let panel = GaplaClipboardPanel(
-      client: GaplaClipboardClient(accessGroup: "group.\(Self.resolvedContainingAppBundleID)"),
+      mode: .page,
+      pageHeight: pageHeight,
+      client: clipboardClient,
       hasFullAccess: { [weak self] in self?.hasFullAccess ?? false },
       rowBackground: Palette.keyBackground,
       textColor: Palette.keyText,
       accent: Palette.accentTint
     )
     panel.onKeyClick = { [weak self] in self?.playKeyClick() }
+    panel.onSearchTap = { [weak self] in self?.openClipboardSearch() }
     panel.translatesAutoresizingMaskIntoConstraints = false
     stack.addArrangedSubview(panel)
-    let pageHeight = panel.heightAnchor.constraint(equalToConstant: 3 * metrics.keyHeight + 2 * metrics.rowGap)
-    pageHeight.priority = UILayoutPriority(999)
-    pageHeight.isActive = true
+    let pageConstraint = panel.heightAnchor.constraint(equalToConstant: pageHeight)
+    pageConstraint.priority = UILayoutPriority(999)
+    pageConstraint.isActive = true
     clipboardPanel = panel
     // Built while the page is showing (first open, or a rebuild on rotation): the saved list
     // only — the server is asked on the button tap alone.
@@ -3945,13 +3988,22 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   /// The toolbar's clipboard button: letters or any page ⇄ the clipboard page. Each tap shows
   /// the saved list at once and refreshes it from the server; never in the background (owner's
-  /// rule).
+  /// rule). G73: with the search open, a tap closes it and the clipboard together.
   @objc private func handleClipboardButtonTapped() {
     playKeyClick()
+    if isClipboardSearchOpen {
+      closeClipboardSearch(showPage: false)
+      returnToLetters()
+      return
+    }
     if layoutMode == .clipboard {
       returnToLetters()
       return
     }
+    showClipboardPage()
+  }
+
+  private func showClipboardPage() {
     layoutMode = .clipboard
     typedOnSymbolPage = false
     isCapsLocked = false
@@ -3959,6 +4011,89 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     refreshVisibleKeyboardMode() // builds the page the first time
     refreshShiftState()
     clipboardPanel?.open()
+  }
+
+  // MARK: Gapla clipboard search (G73)
+
+  /// The search panel sits in the stack above the toolbar, as the translator's does; the keyboard grows by it and the
+  /// keys keep their height below.
+  private func installClipboardSearchIfNeeded() {
+    guard !clipboardSearchInstalled else { return }
+    clipboardSearchInstalled = true
+    let panel = clipboardSearchPanel
+    panel.translatesAutoresizingMaskIntoConstraints = false
+    panel.isHidden = true
+    rootStack.insertArrangedSubview(panel, at: 0)
+    let panelHeight = panel.heightAnchor.constraint(equalToConstant: GaplaClipboardPanel.searchHeight)
+    panelHeight.priority = UILayoutPriority(999)
+    panelHeight.isActive = true
+    panel.onKeyClick = { [weak self] in self?.playKeyClick() }
+    panel.onSearchClear = { [weak self] in self?.setClipboardSearchText("") }
+    panel.onSearchClose = { [weak self] in self?.closeClipboardSearch(showPage: true) }
+    // As the computer's Option+B window closes after a copy: back to the page, which says so.
+    panel.onSearchCopied = { [weak self] in
+      self?.closeClipboardSearch(showPage: true)
+      self?.clipboardPanel?.showNote("Nusxalandi")
+    }
+  }
+
+  /// The clipboard page's field was tapped: the panel opens above the toolbar with the ordinary list, and the letters
+  /// come back in the page's place to type into it.
+  private func openClipboardSearch() {
+    guard hasFullAccess, !isClipboardSearchOpen else { return }
+    closeTranslator()
+    installClipboardSearchIfNeeded()
+    clipboardSearchText = ""
+    clipboardSearchPanel.beginSearch(list: clipboardPanel?.listShown)
+    clipboardSearchPanel.isHidden = false
+    returnToLetters()
+    applyTopPanelHeight()
+    refreshReturnKey()
+  }
+
+  /// ✕ and a copy go back to the clipboard page (`showPage`); the clipboard button, the translator and the keyboard
+  /// going away close it altogether.
+  private func closeClipboardSearch(showPage: Bool) {
+    guard isClipboardSearchOpen else { return }
+    clipboardSearchText = nil
+    clipboardSearchPanel.endSearch()
+    clipboardSearchPanel.isHidden = true
+    applyTopPanelHeight()
+    refreshReturnKey()
+    if showPage {
+      showClipboardPage()
+    } else {
+      refreshVisibleKeyboardMode()
+    }
+  }
+
+  private func setClipboardSearchText(_ value: String) {
+    guard isClipboardSearchOpen else { return }
+    let text = GaplaBuferQidiruv.limited(value)
+    clipboardSearchText = text
+    clipboardSearchPanel.setQuery(text)
+  }
+
+  /// Text from a key or dictation, added at the end — the field has no cursor of its own, and one line.
+  private func appendToClipboardSearch(_ piece: String, spaced: Bool = false) {
+    guard var text = clipboardSearchText else { return }
+    let piece = piece.replacingOccurrences(of: "\n", with: " ")
+    guard !piece.isEmpty else { return }
+    if spaced, let last = text.last, !last.isWhitespace, !piece.hasPrefix(" ") {
+      text += " "
+    }
+    setClipboardSearchText(text + piece)
+  }
+
+  private func deleteFromClipboardSearch(word: Bool) {
+    guard var text = clipboardSearchText, !text.isEmpty else { return }
+    if word {
+      while let last = text.last, last.isWhitespace || last.isPunctuation { text.removeLast() }
+      while let last = text.last, !(last.isWhitespace || last.isPunctuation) { text.removeLast() }
+    } else {
+      text.removeLast()
+    }
+    setClipboardSearchText(text)
   }
 
   // MARK: Gapla word suggestions (G41, G55)
@@ -4043,13 +4178,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   /// Gapla (G58): words are counted toward the owner's list, and sent to the server, only from the Uzbek keyboard —
   /// the typed word, countTypedWordIfFinished, a picked suggestion and viewWillDisappear's flush ask this.
-  private var tavsiyaOn: Bool { keyboardLanguage == .uz && !isTranslatorOpen }
+  private var tavsiyaOn: Bool { keyboardLanguage == .uz && !isTranslatorOpen && !isClipboardSearchOpen }
 
   /// Gapla (G62, owner 2026-11-14: [so'zlari: bilim/gapla-goyalar-royxati.md], chose «O'zbekcha hamma tilda»): the
   /// Uzbek list is also suggested on the Turkish and English keyboards, where he types Uzbek too; nothing typed there
   /// is counted (tavsiyaOn). The Cyrillic keyboards show none: no Latin word can match them.
   private var tavsiyaShows: Bool {
-    !isTranslatorOpen && (keyboardLanguage == .uz || keyboardLanguage == .tr || keyboardLanguage == .en)
+    !isTranslatorOpen && !isClipboardSearchOpen
+      && (keyboardLanguage == .uz || keyboardLanguage == .tr || keyboardLanguage == .en)
   }
 
   /// G58/G62: the saved word list is read, and fetched again when due, while the keyboard suggests (tavsiyaShows).
@@ -4170,8 +4306,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func refreshReturnKey() {
     guard let returnButton else { return }
-    let style = ReturnKeyStyle.forReturnKeyType(textDocumentProxy.returnKeyType)
-    let isDisabled = isReturnKeyDisabled
+    // G73: while the clipboard search is open the key is its search key, never greyed.
+    let style = ReturnKeyStyle.forReturnKeyType(isClipboardSearchOpen ? .search : textDocumentProxy.returnKeyType)
+    let isDisabled = !isClipboardSearchOpen && isReturnKeyDisabled
     let state = ReturnKeyState(style: style, isDisabled: isDisabled)
     guard state != appliedReturnKeyState else { return }
     appliedReturnKeyState = state
@@ -4975,7 +5112,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   /// Follows the field's autocapitalization type, as Apple's keyboard does (URL and email
   /// fields start lowercase).
   private func shouldAutoCapitalize() -> Bool {
-    fieldCapitalization.capitalizesNext(after: textDocumentProxy.documentContextBeforeInput)
+    // G73: the clipboard search ignores letter case; its text starts small.
+    if isClipboardSearchOpen { return false }
+    return fieldCapitalization.capitalizesNext(after: textDocumentProxy.documentContextBeforeInput)
   }
 
   private var fieldCapitalization: AutoCapitalization {
@@ -5001,7 +5140,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func performRepeatingDelete() {
     playKeyClick()
-    if isTranslatorOpen {
+    if isClipboardSearchOpen {
+      deleteFromClipboardSearch(word: deleteRepeatCount >= 24 && deleteRepeatCount % 6 == 0)
+    } else if isTranslatorOpen {
       deleteFromTranslator(word: deleteRepeatCount >= 24 && deleteRepeatCount % 6 == 0)
     } else if deleteRepeatCount >= 24 && deleteRepeatCount % 6 == 0 {
       deletePreviousWordChunk()
@@ -5736,6 +5877,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
 
   private func insertSmartText(_ text: String) {
     guard !text.isEmpty else { return }
+    // G73: dictation while the clipboard search is open says what to look for; the sentence's full stop is no word.
+    if isClipboardSearchOpen {
+      appendToClipboardSearch(
+        text.trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines)),
+        spaced: true
+      )
+      return
+    }
     // G56: dictation while the translator is open fills its text.
     if isTranslatorOpen {
       appendToTranslator(text, spaced: true)
