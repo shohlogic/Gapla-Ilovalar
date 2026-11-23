@@ -171,6 +171,9 @@ final class GaplaTarjimonPanel: UIView {
   private(set) var source: GaplaTarjimonTil = .uz
   private(set) var target: GaplaTarjimonTil = .ru
   private let accent: UIColor
+  /// Behind white text: Gapla mandarin in both modes, as the prominent return key (G74: the dark accent is too light
+  /// for white text, 2.2:1).
+  private let fill: UIColor
   private let keyBackground: UIColor
   private let textColor: UIColor
 
@@ -188,8 +191,9 @@ final class GaplaTarjimonPanel: UIView {
   private var text = ""
   private var busy = false
 
-  init(accent: UIColor, keyBackground: UIColor, textColor: UIColor) {
+  init(accent: UIColor, fill: UIColor, keyBackground: UIColor, textColor: UIColor) {
     self.accent = accent
+    self.fill = fill
     self.keyBackground = keyBackground
     self.textColor = textColor
     super.init(frame: .zero)
@@ -279,7 +283,7 @@ final class GaplaTarjimonPanel: UIView {
     addSubview(pasteButton)
 
     translateButton.translatesAutoresizingMaskIntoConstraints = false
-    translateButton.backgroundColor = accent
+    translateButton.backgroundColor = fill
     translateButton.layer.cornerRadius = 22
     translateButton.setTitleColor(.white, for: .normal)
     translateButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
@@ -493,6 +497,9 @@ final class GaplaTarjimonNatijaView: UIView {
   var onKeyClick: (() -> Void)?
 
   private let accent: UIColor
+  /// Behind white text: Gapla mandarin in both modes, as the prominent return key (G74: the dark accent is too light
+  /// for white text, 2.2:1).
+  private let fill: UIColor
   private let keyBackground: UIColor
   private let textColor: UIColor
 
@@ -512,8 +519,9 @@ final class GaplaTarjimonNatijaView: UIView {
   private var variants: [String] = []
   private var copiedToken = 0
 
-  init(accent: UIColor, keyBackground: UIColor, textColor: UIColor) {
+  init(accent: UIColor, fill: UIColor, keyBackground: UIColor, textColor: UIColor) {
     self.accent = accent
+    self.fill = fill
     self.keyBackground = keyBackground
     self.textColor = textColor
     super.init(frame: .zero)
@@ -703,7 +711,7 @@ final class GaplaTarjimonNatijaView: UIView {
     button.imageEdgeInsets = UIEdgeInsets(top: 0, left: -5, bottom: 0, right: 5)
     button.layer.cornerRadius = 12
     if filled {
-      button.backgroundColor = accent
+      button.backgroundColor = fill
       button.tintColor = .white
       button.setTitleColor(.white, for: .normal)
     } else {

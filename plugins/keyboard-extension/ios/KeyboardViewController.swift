@@ -1508,11 +1508,13 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var translatorViewsInstalled = false
   private lazy var translatorPanel = GaplaTarjimonPanel(
     accent: Palette.accentTint,
+    fill: Palette.accent,
     keyBackground: Palette.keyBackground,
     textColor: Palette.keyText
   )
   private lazy var translatorResults = GaplaTarjimonNatijaView(
     accent: Palette.accentTint,
+    fill: Palette.accent,
     keyBackground: Palette.keyBackground,
     textColor: Palette.keyText
   )
