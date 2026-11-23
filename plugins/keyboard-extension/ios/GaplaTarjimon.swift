@@ -10,8 +10,8 @@ import UIKit
 // «Ruschaga tarjima qilish»; the results say it too — «Ruscha — aniq», «Ruscha — sayqallangan».
 //
 // 文A opens the panel above the keys: the keys, the clipboard and Gapla dictation write into its own text, not the
-// field. Nothing but the button translates (G65). The variants then show in the keys' place: «Joylash» types the
-// chosen one into the field, «Nusxa» copies it.
+// field. Nothing but the button translates (G65). The result then takes the whole keyboard (G74): one variant at a
+// time, «Joylash» types it into the field, «Nusxa» copies it, «Tahrirlash» brings the keys and the text back.
 //
 // Server: `POST <Gapla>/v1/tarjima` with the dictation key the app mirrors into the App Group's Keychain group (the key
 // GaplaClipboardClient reads), request `{matn, til}` — the server finds the source language itself — answer `{manba, til, variantlar: [{tur, matn}]}` — as
@@ -477,19 +477,40 @@ final class GaplaTarjimonPanel: UIView {
   }
 }
 
-/// The two variants, in the keys' place: «Ruscha — aniq» and «Ruscha — sayqallangan», each with «Joylash» and
-/// «Nusxa»; above them the direction (O'zbekcha → Русский) and «Tahrirlash», which brings the keys back.
+/// G74 (owner 2026-11-24: «kihckina joyda kop narsalar bor … natijalarni korish siqilib qolgan tor joyga»; «tarjima
+/// bosilgach chiqadigan oyna juda noqulay»; chose variant 2 and «asl matnni tahrirlashga qaytish tugmasi kormadim»):
+/// the result takes the whole keyboard — the languages, the text line, the button, the toolbar and the keys step
+/// aside, the height stays. Four rows:
+///   «Aniq | Sayqallangan» and ✕;
+///   the text he wrote, its language and «Tahrirlash», which brings the keys, the text and the languages back;
+///   one variant, large («Ruscha — aniq»); a swipe also switches the variant;
+///   «Nusxa» and a wide «Joylash».
 final class GaplaTarjimonNatijaView: UIView {
   var onInsert: ((String) -> Void)?
   var onCopy: ((String) -> Void)?
   var onEdit: (() -> Void)?
+  var onClose: (() -> Void)?
+  var onKeyClick: (() -> Void)?
 
   private let accent: UIColor
   private let keyBackground: UIColor
   private let textColor: UIColor
-  private let headerLabel = UILabel()
+
+  private let variantPicker = UISegmentedControl(items: ["Aniq", "Sayqallangan"])
+  private let closeButton = UIButton(type: .system)
+  private let sourceStrip = UIControl()
+  private let sourceCaption = UILabel()
+  private let sourceLabel = UILabel()
   private let editButton = UIButton(type: .system)
-  private let cards = UIStackView()
+  private let card = UIView()
+  private let cardTitle = UILabel()
+  private let body = UITextView()
+  private let copyButton = UIButton(type: .system)
+  private let insertButton = UIButton(type: .system)
+
+  private var target: GaplaTarjimonTil = .ru
+  private var variants: [String] = []
+  private var copiedToken = 0
 
   init(accent: UIColor, keyBackground: UIColor, textColor: UIColor) {
     self.accent = accent
@@ -507,148 +528,274 @@ final class GaplaTarjimonNatijaView: UIView {
     // Not fully clear: iOS sends a keyboard no touches where its pixels are transparent.
     backgroundColor = UIColor(white: 0, alpha: 0.001)
 
-    headerLabel.translatesAutoresizingMaskIntoConstraints = false
-    headerLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
-    headerLabel.textColor = textColor.withAlphaComponent(0.6)
-    headerLabel.numberOfLines = 2
-    headerLabel.adjustsFontSizeToFitWidth = true
-    headerLabel.minimumScaleFactor = 0.8
-    addSubview(headerLabel)
+    variantPicker.translatesAutoresizingMaskIntoConstraints = false
+    variantPicker.selectedSegmentIndex = 0
+    variantPicker.setTitleTextAttributes(
+      [.font: UIFont.systemFont(ofSize: 15, weight: .medium), .foregroundColor: textColor.withAlphaComponent(0.6)],
+      for: .normal
+    )
+    variantPicker.setTitleTextAttributes(
+      [.font: UIFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: textColor],
+      for: .selected
+    )
+    variantPicker.addTarget(self, action: #selector(variantPicked), for: .valueChanged)
+    addSubview(variantPicker)
+
+    closeButton.translatesAutoresizingMaskIntoConstraints = false
+    closeButton.setImage(
+      UIImage(systemName: "xmark")?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)),
+      for: .normal
+    )
+    closeButton.tintColor = textColor
+    closeButton.backgroundColor = keyBackground
+    closeButton.layer.cornerRadius = 22
+    closeButton.accessibilityLabel = "Tarjimonni yopish"
+    closeButton.addAction(UIAction { [weak self] _ in
+      self?.onKeyClick?()
+      self?.onClose?()
+    }, for: .touchUpInside)
+    addSubview(closeButton)
+
+    // The text he wrote: a lighter strip than the card, so the answer stays the main thing. A tap anywhere on it edits.
+    sourceStrip.translatesAutoresizingMaskIntoConstraints = false
+    sourceStrip.backgroundColor = UIColor { traits in
+      traits.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.12) : UIColor(white: 1, alpha: 0.5)
+    }
+    sourceStrip.layer.cornerRadius = 12
+    sourceStrip.addAction(UIAction { [weak self] _ in self?.editTapped() }, for: .touchUpInside)
+    addSubview(sourceStrip)
+
+    sourceCaption.translatesAutoresizingMaskIntoConstraints = false
+    sourceCaption.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
+    sourceCaption.textColor = textColor.withAlphaComponent(0.5)
+    sourceStrip.addSubview(sourceCaption)
+
+    sourceLabel.translatesAutoresizingMaskIntoConstraints = false
+    sourceLabel.font = UIFont.systemFont(ofSize: 14)
+    sourceLabel.textColor = textColor.withAlphaComponent(0.75)
+    sourceLabel.lineBreakMode = .byTruncatingTail
+    sourceStrip.addSubview(sourceLabel)
 
     editButton.translatesAutoresizingMaskIntoConstraints = false
     editButton.setTitle("Tahrirlash", for: .normal)
-    editButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+    editButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
     editButton.setImage(
-      UIImage(systemName: "keyboard")?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)),
+      UIImage(systemName: "pencil")?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)),
       for: .normal
     )
     editButton.tintColor = accent
+    editButton.backgroundColor = keyBackground
+    editButton.layer.cornerRadius = 9
+    editButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 14)
     editButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: -4, bottom: 0, right: 4)
+    editButton.accessibilityLabel = "Matnni tahrirlash"
     editButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-    editButton.addAction(UIAction { [weak self] _ in self?.onEdit?() }, for: .touchUpInside)
-    addSubview(editButton)
+    editButton.setContentHuggingPriority(.required, for: .horizontal)
+    editButton.addAction(UIAction { [weak self] _ in self?.editTapped() }, for: .touchUpInside)
+    sourceStrip.addSubview(editButton)
 
-    cards.translatesAutoresizingMaskIntoConstraints = false
-    cards.axis = .vertical
-    cards.spacing = 6
-    cards.distribution = .fillEqually
-    addSubview(cards)
-
-    NSLayoutConstraint.activate([
-      headerLabel.topAnchor.constraint(equalTo: topAnchor),
-      headerLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-      headerLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 26),
-      headerLabel.trailingAnchor.constraint(lessThanOrEqualTo: editButton.leadingAnchor, constant: -8),
-
-      editButton.trailingAnchor.constraint(equalTo: trailingAnchor),
-      editButton.centerYAnchor.constraint(equalTo: headerLabel.centerYAnchor),
-      editButton.heightAnchor.constraint(equalToConstant: 26),
-
-      cards.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
-      cards.leadingAnchor.constraint(equalTo: leadingAnchor),
-      cards.trailingAnchor.constraint(equalTo: trailingAnchor),
-      cards.bottomAnchor.constraint(equalTo: bottomAnchor),
-    ])
-  }
-
-  /// A note in the header in place of the direction (an error, «Nusxa olindi»).
-  func showNote(_ note: String, isError: Bool) {
-    headerLabel.text = note
-    headerLabel.textColor = isError ? UIColor.systemRed : accent
-  }
-
-  /// No translation came: the reason alone; «Tahrirlash» brings the keys back.
-  func showError(_ message: String) {
-    cards.arrangedSubviews.forEach { $0.removeFromSuperview() }
-    showNote(message, isError: true)
-  }
-
-  func show(_ natija: GaplaTarjimaNatija, from source: GaplaTarjimonTil, to target: GaplaTarjimonTil) {
-    // The server's own answer wins: it names the languages it really used.
-    let from = GaplaTarjimonTil(rawValue: natija.manba) ?? source
-    let to = GaplaTarjimonTil(rawValue: natija.til) ?? target
-    headerLabel.text = "\(from.name) → \(to.name)"
-    headerLabel.textColor = textColor.withAlphaComponent(0.6)
-    cards.arrangedSubviews.forEach { $0.removeFromSuperview() }
-    cards.addArrangedSubview(makeCard(title: "\(to.uzbekName) — aniq", text: natija.aniq))
-    if !natija.silliq.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      cards.addArrangedSubview(makeCard(title: "\(to.uzbekName) — sayqallangan", text: natija.silliq))
-    }
-  }
-
-  private func makeCard(title: String, text: String) -> UIView {
-    let card = UIView()
+    card.translatesAutoresizingMaskIntoConstraints = false
     card.backgroundColor = keyBackground
-    card.layer.cornerRadius = 12
+    card.layer.cornerRadius = 14
+    addSubview(card)
 
-    let titleLabel = UILabel()
-    titleLabel.translatesAutoresizingMaskIntoConstraints = false
-    titleLabel.text = title
-    titleLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
-    titleLabel.textColor = accent
-    card.addSubview(titleLabel)
+    cardTitle.translatesAutoresizingMaskIntoConstraints = false
+    cardTitle.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+    cardTitle.numberOfLines = 2
+    card.addSubview(cardTitle)
 
     // Read-only and scrollable; the server keeps the line breaks (G63) and they show as they are.
-    let body = UITextView()
     body.translatesAutoresizingMaskIntoConstraints = false
     body.isEditable = false
     body.isSelectable = false
     body.backgroundColor = .clear
     body.textContainerInset = .zero
     body.textContainer.lineFragmentPadding = 0
-    body.font = UIFont.systemFont(ofSize: 15)
+    body.font = UIFont.systemFont(ofSize: 19)
     body.textColor = textColor
-    body.text = text
     card.addSubview(body)
 
-    let insert = actionButton(title: "Joylash", systemImage: "text.insert", filled: true)
-    insert.addAction(UIAction { [weak self] _ in self?.onInsert?(text) }, for: .touchUpInside)
-    let copy = actionButton(title: "Nusxa", systemImage: "doc.on.doc", filled: false)
-    copy.addAction(UIAction { [weak self] _ in self?.onCopy?(text) }, for: .touchUpInside)
-    let actions = UIStackView(arrangedSubviews: [insert, copy])
-    actions.translatesAutoresizingMaskIntoConstraints = false
-    actions.axis = .vertical
-    actions.spacing = 6
-    actions.distribution = .fillEqually
-    card.addSubview(actions)
+    // A swipe also turns the page: left to «Sayqallangan», right back to «Aniq».
+    for direction in [UISwipeGestureRecognizer.Direction.left, .right] {
+      let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swiped(_:)))
+      swipe.direction = direction
+      card.addGestureRecognizer(swipe)
+    }
+
+    style(copyButton, title: "Nusxa", systemImage: "doc.on.doc", filled: false)
+    copyButton.addAction(UIAction { [weak self] _ in
+      guard let self, let text = self.currentText else { return }
+      self.onKeyClick?()
+      self.onCopy?(text)
+    }, for: .touchUpInside)
+    addSubview(copyButton)
+
+    style(insertButton, title: "Joylash", systemImage: "text.insert", filled: true)
+    insertButton.addAction(UIAction { [weak self] _ in
+      guard let self, let text = self.currentText else { return }
+      self.onKeyClick?()
+      self.onInsert?(text)
+    }, for: .touchUpInside)
+    addSubview(insertButton)
 
     NSLayoutConstraint.activate([
-      titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
-      titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
-      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor, constant: -8),
+      closeButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+      closeButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+      closeButton.widthAnchor.constraint(equalToConstant: 44),
+      closeButton.heightAnchor.constraint(equalToConstant: 44),
 
-      body.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-      body.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
-      body.trailingAnchor.constraint(equalTo: actions.leadingAnchor, constant: -8),
-      body.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
+      variantPicker.leadingAnchor.constraint(equalTo: leadingAnchor),
+      variantPicker.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
+      variantPicker.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
+      variantPicker.heightAnchor.constraint(equalToConstant: 40),
 
-      actions.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
-      actions.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
-      actions.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
-      actions.widthAnchor.constraint(equalToConstant: 96),
+      sourceStrip.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 6),
+      sourceStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
+      sourceStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
+      sourceStrip.heightAnchor.constraint(equalToConstant: 52),
+
+      sourceCaption.topAnchor.constraint(equalTo: sourceStrip.topAnchor, constant: 8),
+      sourceCaption.leadingAnchor.constraint(equalTo: sourceStrip.leadingAnchor, constant: 12),
+      sourceCaption.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
+
+      sourceLabel.bottomAnchor.constraint(equalTo: sourceStrip.bottomAnchor, constant: -8),
+      sourceLabel.leadingAnchor.constraint(equalTo: sourceCaption.leadingAnchor),
+      sourceLabel.trailingAnchor.constraint(equalTo: sourceCaption.trailingAnchor),
+
+      editButton.trailingAnchor.constraint(equalTo: sourceStrip.trailingAnchor, constant: -8),
+      editButton.centerYAnchor.constraint(equalTo: sourceStrip.centerYAnchor),
+      editButton.heightAnchor.constraint(equalToConstant: 36),
+
+      card.topAnchor.constraint(equalTo: sourceStrip.bottomAnchor, constant: 6),
+      card.leadingAnchor.constraint(equalTo: leadingAnchor),
+      card.trailingAnchor.constraint(equalTo: trailingAnchor),
+      card.bottomAnchor.constraint(equalTo: insertButton.topAnchor, constant: -6),
+
+      cardTitle.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+      cardTitle.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+      cardTitle.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+
+      body.topAnchor.constraint(equalTo: cardTitle.bottomAnchor, constant: 6),
+      body.leadingAnchor.constraint(equalTo: cardTitle.leadingAnchor),
+      body.trailingAnchor.constraint(equalTo: cardTitle.trailingAnchor),
+      body.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+
+      copyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+      copyButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+      copyButton.heightAnchor.constraint(equalToConstant: 48),
+      copyButton.widthAnchor.constraint(equalToConstant: 120),
+
+      insertButton.leadingAnchor.constraint(equalTo: copyButton.trailingAnchor, constant: 8),
+      insertButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+      insertButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+      insertButton.heightAnchor.constraint(equalTo: copyButton.heightAnchor),
     ])
-    return card
   }
 
-  private func actionButton(title: String, systemImage: String, filled: Bool) -> UIButton {
-    let button = UIButton(type: .system)
+  private func style(_ button: UIButton, title: String, systemImage: String, filled: Bool) {
+    button.translatesAutoresizingMaskIntoConstraints = false
     button.setTitle(title, for: .normal)
-    button.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+    button.titleLabel?.font = UIFont.systemFont(ofSize: filled ? 17 : 16, weight: .semibold)
     button.setImage(
-      UIImage(systemName: systemImage)?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)),
+      UIImage(systemName: systemImage)?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)),
       for: .normal
     )
-    button.imageEdgeInsets = UIEdgeInsets(top: 0, left: -4, bottom: 0, right: 4)
-    button.layer.cornerRadius = 8
+    button.imageEdgeInsets = UIEdgeInsets(top: 0, left: -5, bottom: 0, right: 5)
+    button.layer.cornerRadius = 12
     if filled {
       button.backgroundColor = accent
       button.tintColor = .white
       button.setTitleColor(.white, for: .normal)
     } else {
-      button.backgroundColor = UIColor.tertiarySystemFill
+      button.backgroundColor = keyBackground
       button.tintColor = accent
       button.setTitleColor(accent, for: .normal)
     }
-    return button
+  }
+
+  private var currentText: String? {
+    let index = variantPicker.selectedSegmentIndex
+    guard variants.indices.contains(index) else { return nil }
+    return variants[index]
+  }
+
+  /// The text he wrote, shown as he wrote it; one line, a line break as ↵.
+  private func showSource(_ text: String, from source: GaplaTarjimonTil) {
+    sourceCaption.text = "Siz yozgan · \(source.uzbekName)"
+    sourceLabel.text = text.replacingOccurrences(of: "\n", with: " ↵ ")
+    sourceStrip.accessibilityLabel = "Siz yozgan matn: \(text)"
+  }
+
+  func show(_ natija: GaplaTarjimaNatija, from source: GaplaTarjimonTil, to target: GaplaTarjimonTil, sourceText: String) {
+    // The server's own answer wins: it names the languages it really used.
+    let from = GaplaTarjimonTil(rawValue: natija.manba) ?? source
+    self.target = GaplaTarjimonTil(rawValue: natija.til) ?? target
+    showSource(sourceText, from: from)
+    let smooth = natija.silliq.trimmingCharacters(in: .whitespacesAndNewlines)
+    variants = smooth.isEmpty ? [natija.aniq] : [natija.aniq, natija.silliq]
+    variantPicker.isEnabled = true
+    variantPicker.setEnabled(variants.count > 1, forSegmentAt: 1)
+    variantPicker.selectedSegmentIndex = 0
+    copyButton.isHidden = false
+    insertButton.isHidden = false
+    showVariant()
+  }
+
+  /// No translation came: the reason in the card; «Tahrirlash» and ✕ stay.
+  func showError(_ message: String, sourceText: String, from source: GaplaTarjimonTil) {
+    showSource(sourceText, from: source)
+    variants = []
+    variantPicker.selectedSegmentIndex = 0
+    variantPicker.isEnabled = false
+    cardTitle.text = "Tarjima chiqmadi"
+    cardTitle.textColor = UIColor.systemRed
+    body.text = message
+    copyButton.isHidden = true
+    insertButton.isHidden = true
+  }
+
+  /// «Nusxa» says it worked for a moment.
+  func showCopied() {
+    copiedToken += 1
+    let token = copiedToken
+    copyButton.setTitle("Olindi", for: .normal)
+    copyButton.setImage(
+      UIImage(systemName: "checkmark")?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)),
+      for: .normal
+    )
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+      guard let self, self.copiedToken == token else { return }
+      self.style(self.copyButton, title: "Nusxa", systemImage: "doc.on.doc", filled: false)
+    }
+  }
+
+  private func showVariant() {
+    let index = variantPicker.selectedSegmentIndex
+    guard variants.indices.contains(index) else { return }
+    cardTitle.text = "\(target.uzbekName) — \(index == 0 ? "aniq" : "sayqallangan")"
+    cardTitle.textColor = accent
+    body.text = variants[index]
+    body.setContentOffset(.zero, animated: false)
+    // The copy note belongs to the variant it was taken from.
+    copiedToken += 1
+    style(copyButton, title: "Nusxa", systemImage: "doc.on.doc", filled: false)
+  }
+
+  private func editTapped() {
+    onKeyClick?()
+    onEdit?()
+  }
+
+  @objc private func variantPicked() {
+    onKeyClick?()
+    showVariant()
+  }
+
+  @objc private func swiped(_ swipe: UISwipeGestureRecognizer) {
+    let next = swipe.direction == .left ? 1 : 0
+    guard next != variantPicker.selectedSegmentIndex, variants.indices.contains(next) else { return }
+    onKeyClick?()
+    variantPicker.selectedSegmentIndex = next
+    showVariant()
   }
 }

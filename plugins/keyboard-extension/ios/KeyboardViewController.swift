@@ -3297,8 +3297,8 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     if isTranslatorOpen { closeTranslator() } else { openTranslator() }
   }
 
-  /// The panel sits in the stack above the toolbar, so it fades with the keys under the recording orb; the results take
-  /// the keys' place over the rows.
+  /// The panel sits in the stack above the toolbar, so it fades with the keys under the recording orb. The results
+  /// (G74) take the whole keyboard — the panel's, the toolbar's and the keys' place — at the same height.
   private func installTranslatorViewsIfNeeded() {
     guard !translatorViewsInstalled else { return }
     translatorViewsInstalled = true
@@ -3315,7 +3315,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     results.isHidden = true
     rootStack.addSubview(results)
     NSLayoutConstraint.activate([
-      results.topAnchor.constraint(equalTo: keyboardRowsStack.topAnchor),
+      results.topAnchor.constraint(equalTo: panel.topAnchor),
       results.bottomAnchor.constraint(equalTo: keyboardRowsStack.bottomAnchor),
       results.leadingAnchor.constraint(equalTo: keyboardRowsStack.leadingAnchor),
       results.trailingAnchor.constraint(equalTo: keyboardRowsStack.trailingAnchor),
@@ -3326,19 +3326,15 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     panel.onTranslate = { [weak self] in self?.runTranslation() }
     panel.onPaste = { [weak self] in self?.pasteIntoTranslator() }
     panel.onClear = { [weak self] in self?.setTranslatorText("") }
-    results.onEdit = { [weak self] in
-      self?.playKeyClick()
-      self?.showTranslatorResults(false)
-    }
+    // The results view plays its own clicks.
+    results.onKeyClick = { [weak self] in self?.playKeyClick() }
+    results.onEdit = { [weak self] in self?.showTranslatorResults(false) }
+    results.onClose = { [weak self] in self?.closeTranslator() }
     results.onCopy = { [weak self] text in
-      self?.playKeyClick()
       UIPasteboard.general.string = text
-      self?.translatorResults.showNote("Nusxa olindi", isError: false)
+      self?.translatorResults.showCopied()
     }
-    results.onInsert = { [weak self] text in
-      self?.playKeyClick()
-      self?.insertTranslation(text)
-    }
+    results.onInsert = { [weak self] text in self?.insertTranslation(text) }
   }
 
   private func openTranslator() {
@@ -3375,11 +3371,14 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     applyKeyboardHeight()
   }
 
+  /// G74: the panel, the toolbar and the keys step aside (alpha, so the stack keeps its height) while the results show.
   private func showTranslatorResults(_ on: Bool) {
     guard translatorViewsInstalled else { return }
     translatorResults.isHidden = !on
-    keyboardRowsStack.alpha = on ? 0 : 1
-    keyboardRowsStack.isUserInteractionEnabled = !on
+    for covered in [translatorPanel, topBar, keyboardRowsStack] {
+      covered.alpha = on ? 0 : 1
+      covered.isUserInteractionEnabled = !on
+    }
   }
 
   private func setTranslatorText(_ value: String) {
@@ -3433,9 +3432,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
       self.translatorPanel.setBusy(false)
       switch result {
       case .success(let natija):
-        self.translatorResults.show(natija, from: source, to: target)
+        self.translatorResults.show(natija, from: source, to: target, sourceText: text)
       case .failure(let error):
-        self.translatorResults.showError(error.localizedDescription)
+        self.translatorResults.showError(error.localizedDescription, sourceText: text, from: source)
       }
       self.showTranslatorResults(true)
     }
