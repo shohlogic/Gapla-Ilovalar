@@ -156,11 +156,15 @@ struct GaplaTarjimonError: LocalizedError {
   var errorDescription: String? { GaplaTarjimonClient.message(forStatus: status) }
 }
 
-/// The panel above the keys, three rows: «Qaysi tildan» ⇄ «Qaysi tilga»; the text being translated, its language
-/// under it, and «Qo'yish»; ✕ and the button «Ruschaga tarjima qilish». Every target is at least 44 pt (main window's
-/// advice, 2026-11-15), and the language row fits an iPhone SE with the names in full.
+/// The panel above the keys. G74, part 2 (owner 2026-11-24: «qoyish tugmasi bunchalik katta bolmasin, til tanlash
+/// uchun berilgan joy juda katta ekan, shularni orniga matn kiritadigan joyni kattalashtirish kerak, qolganlarini
+/// maksimal kichraytirish kerak»; then «til tanlovini ham kichkina qilib "tarjima" "qo'yish" tugmasini qatoriga
+/// sig'dirish kerak»): the same 150 pt, one text box. Up to five lines of the text, and one small row along its
+/// bottom: «Qo'yish», «UZ ▾ ⇄ RU ▾», the clear button and «Tarjima →». No ✕ here: the 文A button under the panel
+/// closes the translator as it opened it.
 final class GaplaTarjimonPanel: UIView {
   static let height: CGFloat = 150
+  private static let chipHeight: CGFloat = 32
 
   var onClose: (() -> Void)?
   var onTranslate: (() -> Void)?
@@ -180,10 +184,8 @@ final class GaplaTarjimonPanel: UIView {
   private let sourceButton = UIButton(type: .custom)
   private let targetButton = UIButton(type: .custom)
   private let swapButton = UIButton(type: .system)
-  private let closeButton = UIButton(type: .system)
   private let inputBox = UIView()
   private let textLabel = UILabel()
-  private let languageNote = UILabel()
   private let clearButton = UIButton(type: .system)
   private let pasteButton = UIButton(type: .system)
   private let translateButton = UIButton(type: .custom)
@@ -208,24 +210,45 @@ final class GaplaTarjimonPanel: UIView {
   private func build() {
     backgroundColor = .clear
 
+    inputBox.translatesAutoresizingMaskIntoConstraints = false
+    inputBox.backgroundColor = keyBackground
+    inputBox.layer.cornerRadius = 12
+    addSubview(inputBox)
+
+    // Up to five lines, the end kept in sight: a long text is cut in the middle, the caret's end stays.
+    textLabel.translatesAutoresizingMaskIntoConstraints = false
+    textLabel.numberOfLines = 5
+    textLabel.lineBreakMode = .byTruncatingHead
+    textLabel.font = UIFont.systemFont(ofSize: 16)
+    inputBox.addSubview(textLabel)
+
+    // «Qo'yish»: the word alone — the clipboard icon is the toolbar's «Bufer» button below.
+    pasteButton.translatesAutoresizingMaskIntoConstraints = false
+    pasteButton.setTitle("Qo'yish", for: .normal)
+    pasteButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+    pasteButton.setTitleColor(textColor, for: .normal)
+    pasteButton.backgroundColor = UIColor.tertiarySystemFill
+    pasteButton.layer.cornerRadius = Self.chipHeight / 2
+    pasteButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 11, bottom: 0, right: 11)
+    pasteButton.accessibilityLabel = "Buferdan qo'yish"
+    pasteButton.addTarget(self, action: #selector(pasteTapped), for: .touchUpInside)
+    inputBox.addSubview(pasteButton)
+
+    // The languages: «UZ ▾» ⇄ «RU ▾» — a tap lists them by their full names.
     for button in [sourceButton, targetButton] {
       button.translatesAutoresizingMaskIntoConstraints = false
       button.showsMenuAsPrimaryAction = true
-      button.layer.cornerRadius = 10
-      button.layer.borderWidth = 1.5
-      button.layer.borderColor = accent.resolvedColor(with: traitCollection).cgColor
-      button.backgroundColor = keyBackground
-      button.contentHorizontalAlignment = .leading
-      button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 24)
-      button.titleLabel?.numberOfLines = 2
-      button.titleLabel?.lineBreakMode = .byTruncatingTail
-      addSubview(button)
-      // ▾: a tap lists the languages.
+      button.backgroundColor = UIColor.tertiarySystemFill
+      button.layer.cornerRadius = Self.chipHeight / 2
+      button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 22)
+      button.setContentHuggingPriority(.required, for: .horizontal)
+      button.setContentCompressionResistancePriority(.required, for: .horizontal)
+      inputBox.addSubview(button)
       let chevron = UIImageView(image: UIImage(systemName: "chevron.down")?.withConfiguration(
-        UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        UIImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
       ))
       chevron.translatesAutoresizingMaskIntoConstraints = false
-      chevron.tintColor = textColor.withAlphaComponent(0.6)
+      chevron.tintColor = textColor.withAlphaComponent(0.55)
       chevron.isUserInteractionEnabled = false
       button.addSubview(chevron)
       NSLayoutConstraint.activate([
@@ -234,61 +257,24 @@ final class GaplaTarjimonPanel: UIView {
       ])
     }
 
-    configureIcon(swapButton, systemImage: "arrow.left.arrow.right", label: "Tillarni almashtirish", pointSize: 14)
+    configureIcon(swapButton, systemImage: "arrow.left.arrow.right", label: "Tillarni almashtirish", pointSize: 11)
     swapButton.tintColor = textColor
-    swapButton.backgroundColor = keyBackground
-    swapButton.layer.cornerRadius = 22
     swapButton.addTarget(self, action: #selector(swapTapped), for: .touchUpInside)
-    addSubview(swapButton)
+    inputBox.addSubview(swapButton)
 
-    configureIcon(closeButton, systemImage: "xmark", label: "Tarjimonni yopish", pointSize: 13)
-    closeButton.tintColor = textColor
-    closeButton.backgroundColor = keyBackground
-    closeButton.layer.cornerRadius = 22
-    closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-    addSubview(closeButton)
-
-    inputBox.translatesAutoresizingMaskIntoConstraints = false
-    inputBox.backgroundColor = keyBackground
-    inputBox.layer.cornerRadius = 10
-    addSubview(inputBox)
-
-    textLabel.translatesAutoresizingMaskIntoConstraints = false
-    textLabel.numberOfLines = 1
-    textLabel.lineBreakMode = .byTruncatingHead
-    textLabel.font = UIFont.systemFont(ofSize: 15)
-    inputBox.addSubview(textLabel)
-
-    // G67: the chosen «from» language under the text — «O'zbekcha matn».
-    languageNote.translatesAutoresizingMaskIntoConstraints = false
-    languageNote.font = UIFont.systemFont(ofSize: 11)
-    languageNote.textColor = textColor.withAlphaComponent(0.5)
-    inputBox.addSubview(languageNote)
-
-    configureIcon(clearButton, systemImage: "xmark.circle.fill", label: "Matnni tozalash", pointSize: 15)
+    configureIcon(clearButton, systemImage: "xmark.circle.fill", label: "Matnni tozalash", pointSize: 17)
     clearButton.tintColor = UIColor.tertiaryLabel
     clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
     inputBox.addSubview(clearButton)
 
-    pasteButton.translatesAutoresizingMaskIntoConstraints = false
-    pasteButton.setTitle("Qo'yish", for: .normal)
-    pasteButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-    pasteButton.setTitleColor(textColor, for: .normal)
-    pasteButton.backgroundColor = keyBackground
-    pasteButton.layer.cornerRadius = 10
-    pasteButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-    pasteButton.accessibilityLabel = "Buferdan qo'yish"
-    pasteButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-    pasteButton.addTarget(self, action: #selector(pasteTapped), for: .touchUpInside)
-    addSubview(pasteButton)
-
+    // «Tarjima →»: the main action, at the row's right end.
     translateButton.translatesAutoresizingMaskIntoConstraints = false
     translateButton.backgroundColor = fill
-    translateButton.layer.cornerRadius = 22
-    translateButton.setTitleColor(.white, for: .normal)
-    translateButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+    translateButton.layer.cornerRadius = Self.chipHeight / 2
+    translateButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
+    translateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
     translateButton.addTarget(self, action: #selector(translateTapped), for: .touchUpInside)
-    addSubview(translateButton)
+    inputBox.addSubview(translateButton)
 
     spinner.translatesAutoresizingMaskIntoConstraints = false
     spinner.color = .white
@@ -296,55 +282,45 @@ final class GaplaTarjimonPanel: UIView {
     translateButton.addSubview(spinner)
 
     NSLayoutConstraint.activate([
-      sourceButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-      sourceButton.leadingAnchor.constraint(equalTo: leadingAnchor),
-      sourceButton.heightAnchor.constraint(equalToConstant: 44),
-      sourceButton.trailingAnchor.constraint(equalTo: swapButton.leadingAnchor, constant: -6),
-
-      swapButton.centerYAnchor.constraint(equalTo: sourceButton.centerYAnchor),
-      swapButton.widthAnchor.constraint(equalToConstant: 44),
-      swapButton.heightAnchor.constraint(equalToConstant: 44),
-
-      targetButton.leadingAnchor.constraint(equalTo: swapButton.trailingAnchor, constant: 6),
-      targetButton.topAnchor.constraint(equalTo: sourceButton.topAnchor),
-      targetButton.heightAnchor.constraint(equalTo: sourceButton.heightAnchor),
-      targetButton.widthAnchor.constraint(equalTo: sourceButton.widthAnchor),
-      targetButton.trailingAnchor.constraint(equalTo: trailingAnchor),
-
-      inputBox.topAnchor.constraint(equalTo: sourceButton.bottomAnchor, constant: 6),
+      inputBox.topAnchor.constraint(equalTo: topAnchor, constant: 2),
       inputBox.leadingAnchor.constraint(equalTo: leadingAnchor),
-      inputBox.heightAnchor.constraint(equalToConstant: 44),
-      inputBox.trailingAnchor.constraint(equalTo: pasteButton.leadingAnchor, constant: -6),
+      inputBox.trailingAnchor.constraint(equalTo: trailingAnchor),
+      inputBox.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
 
-      pasteButton.trailingAnchor.constraint(equalTo: trailingAnchor),
-      pasteButton.topAnchor.constraint(equalTo: inputBox.topAnchor),
-      pasteButton.heightAnchor.constraint(equalTo: inputBox.heightAnchor),
+      textLabel.topAnchor.constraint(equalTo: inputBox.topAnchor, constant: 8),
+      textLabel.leadingAnchor.constraint(equalTo: inputBox.leadingAnchor, constant: 12),
+      textLabel.trailingAnchor.constraint(equalTo: inputBox.trailingAnchor, constant: -12),
+      textLabel.bottomAnchor.constraint(lessThanOrEqualTo: translateButton.topAnchor, constant: -2),
 
-      textLabel.leadingAnchor.constraint(equalTo: inputBox.leadingAnchor, constant: 10),
-      textLabel.trailingAnchor.constraint(equalTo: clearButton.leadingAnchor, constant: -4),
-      textLabel.topAnchor.constraint(equalTo: inputBox.topAnchor, constant: 5),
+      pasteButton.leadingAnchor.constraint(equalTo: inputBox.leadingAnchor, constant: 6),
+      pasteButton.bottomAnchor.constraint(equalTo: inputBox.bottomAnchor, constant: -6),
+      pasteButton.heightAnchor.constraint(equalToConstant: Self.chipHeight),
 
-      languageNote.leadingAnchor.constraint(equalTo: textLabel.leadingAnchor),
-      languageNote.trailingAnchor.constraint(equalTo: textLabel.trailingAnchor),
-      languageNote.bottomAnchor.constraint(equalTo: inputBox.bottomAnchor, constant: -4),
+      sourceButton.leadingAnchor.constraint(equalTo: pasteButton.trailingAnchor, constant: 6),
+      sourceButton.centerYAnchor.constraint(equalTo: pasteButton.centerYAnchor),
+      sourceButton.heightAnchor.constraint(equalToConstant: Self.chipHeight),
 
-      clearButton.trailingAnchor.constraint(equalTo: inputBox.trailingAnchor, constant: -2),
-      clearButton.centerYAnchor.constraint(equalTo: inputBox.centerYAnchor),
-      clearButton.widthAnchor.constraint(equalToConstant: 36),
-      clearButton.heightAnchor.constraint(equalToConstant: 44),
+      swapButton.leadingAnchor.constraint(equalTo: sourceButton.trailingAnchor),
+      swapButton.centerYAnchor.constraint(equalTo: pasteButton.centerYAnchor),
+      swapButton.widthAnchor.constraint(equalToConstant: 28),
+      swapButton.heightAnchor.constraint(equalToConstant: Self.chipHeight),
 
-      closeButton.leadingAnchor.constraint(equalTo: leadingAnchor),
-      closeButton.topAnchor.constraint(equalTo: inputBox.bottomAnchor, constant: 6),
-      closeButton.widthAnchor.constraint(equalToConstant: 44),
-      closeButton.heightAnchor.constraint(equalToConstant: 44),
+      targetButton.leadingAnchor.constraint(equalTo: swapButton.trailingAnchor),
+      targetButton.centerYAnchor.constraint(equalTo: pasteButton.centerYAnchor),
+      targetButton.heightAnchor.constraint(equalToConstant: Self.chipHeight),
+      targetButton.trailingAnchor.constraint(lessThanOrEqualTo: clearButton.leadingAnchor, constant: -4),
 
-      translateButton.leadingAnchor.constraint(equalTo: closeButton.trailingAnchor, constant: 6),
-      translateButton.trailingAnchor.constraint(equalTo: trailingAnchor),
-      translateButton.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
-      translateButton.heightAnchor.constraint(equalToConstant: 44),
+      translateButton.trailingAnchor.constraint(equalTo: inputBox.trailingAnchor, constant: -6),
+      translateButton.centerYAnchor.constraint(equalTo: pasteButton.centerYAnchor),
+      translateButton.heightAnchor.constraint(equalToConstant: Self.chipHeight),
+
+      clearButton.trailingAnchor.constraint(equalTo: translateButton.leadingAnchor, constant: -2),
+      clearButton.centerYAnchor.constraint(equalTo: pasteButton.centerYAnchor),
+      clearButton.widthAnchor.constraint(equalToConstant: 30),
+      clearButton.heightAnchor.constraint(equalToConstant: Self.chipHeight),
 
       spinner.centerYAnchor.constraint(equalTo: translateButton.centerYAnchor),
-      spinner.leadingAnchor.constraint(equalTo: translateButton.leadingAnchor, constant: 14),
+      spinner.centerXAnchor.constraint(equalTo: translateButton.centerXAnchor),
     ])
   }
 
@@ -396,25 +372,26 @@ final class GaplaTarjimonPanel: UIView {
     refresh()
   }
 
-  /// «Qaysi tildan» small above, the language below in bold.
-  private func boxTitle(caption: String, til: GaplaTarjimonTil) -> NSAttributedString {
-    let title = NSMutableAttributedString(string: caption + "\n", attributes: [
-      .font: UIFont.systemFont(ofSize: 11),
-      .foregroundColor: textColor.withAlphaComponent(0.55),
-    ])
-    title.append(NSAttributedString(string: til.name, attributes: [
-      .font: UIFont.systemFont(ofSize: 16, weight: .semibold),
-      .foregroundColor: textColor,
-    ]))
+  /// «Tarjima →»: the word and an arrow after it, as one title, so the button sizes itself to both.
+  private func translateTitle(_ color: UIColor) -> NSAttributedString {
+    let font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+    let title = NSMutableAttributedString(string: "Tarjima  ", attributes: [.font: font, .foregroundColor: color])
+    if let arrow = UIImage(systemName: "arrow.right")?
+      .withConfiguration(UIImage.SymbolConfiguration(pointSize: 12, weight: .bold))
+      .withTintColor(color, renderingMode: .alwaysOriginal) {
+      let attachment = NSTextAttachment(image: arrow)
+      attachment.bounds = CGRect(x: 0, y: (font.capHeight - arrow.size.height) / 2, width: arrow.size.width, height: arrow.size.height)
+      title.append(NSAttributedString(attachment: attachment))
+    }
     return title
   }
 
-  override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-    super.traitCollectionDidChange(previousTraitCollection)
-    // A layer colour does not follow light and dark by itself.
-    for button in [sourceButton, targetButton] {
-      button.layer.borderColor = accent.resolvedColor(with: traitCollection).cgColor
-    }
+  /// The language's short code («UZ», «RU», «EN»), as on the keyboard's own language key; the list names them in full.
+  private func pillTitle(_ til: GaplaTarjimonTil) -> NSAttributedString {
+    NSAttributedString(string: til.rawValue.uppercased(), attributes: [
+      .font: UIFont.systemFont(ofSize: 13, weight: .semibold),
+      .foregroundColor: textColor,
+    ])
   }
 
   private func menu(asSource: Bool) -> UIMenu {
@@ -427,8 +404,8 @@ final class GaplaTarjimonPanel: UIView {
   }
 
   private func refresh() {
-    sourceButton.setAttributedTitle(boxTitle(caption: "Qaysi tildan", til: source), for: .normal)
-    targetButton.setAttributedTitle(boxTitle(caption: "Qaysi tilga", til: target), for: .normal)
+    sourceButton.setAttributedTitle(pillTitle(source), for: .normal)
+    targetButton.setAttributedTitle(pillTitle(target), for: .normal)
     sourceButton.menu = menu(asSource: true)
     targetButton.menu = menu(asSource: false)
     sourceButton.accessibilityLabel = "Qaysi tildan: \(source.name)"
@@ -449,14 +426,17 @@ final class GaplaTarjimonPanel: UIView {
     }
     shown.append(NSAttributedString(string: "|", attributes: [.foregroundColor: accent]))
     textLabel.attributedText = shown
-    languageNote.text = "\(source.uzbekName) matn"
     clearButton.isHidden = text.isEmpty
 
-    // G65: off on an empty text, a spinner while it works. G67: the button says where to.
+    // G65: off on an empty text, a spinner in place of the word while it works. The visible word is short
+    // («Tarjima»); the row above already says where to, and VoiceOver reads the whole «Ruschaga tarjima qilish».
     let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    translateButton.setTitle(target.buttonTitle, for: .normal)
+    translateButton.accessibilityLabel = target.buttonTitle
     translateButton.isEnabled = !blank && !busy
     translateButton.alpha = blank && !busy ? 0.4 : 1
+    let word = translateTitle(busy ? .clear : .white)
+    translateButton.setAttributedTitle(word, for: .normal)
+    translateButton.setAttributedTitle(word, for: .disabled)
     if busy { spinner.startAnimating() } else { spinner.stopAnimating() }
   }
 
