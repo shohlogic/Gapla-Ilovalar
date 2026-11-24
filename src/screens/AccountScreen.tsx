@@ -3,6 +3,7 @@ import { gaplaModeTitle, pickGaplaMode, useGaplaMode } from '@/lib/gaplaMode';
 import { Alert, Platform, View, Pressable } from 'react-native';
 import { Text } from '@/components/ui/Text';
 import Constants from 'expo-constants';
+import * as Application from 'expo-application';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { SettingsRow, SettingsSection } from '@/components/ui/SettingsSection';
 import { SettingsScreen } from '@/components/ui/SettingsScreen';
@@ -30,6 +31,15 @@ import { getAffiliateClientConfig } from '@/lib/affiliateLink';
 import { loadAffiliateOffer, type AffiliateOffer } from '@/lib/affiliateOffer';
 import { AccountCreatorLink, type CreatorOfferResult } from '@/components/AccountCreatorLink';
 import { SUPERWALL_PLACEMENTS } from '@/lib/superwall';
+
+/** Gapla: the installed build, e.g. «1.0.0 · yig'ma 47». Every cloud build gets its own number (the marketing version
+ *  stays 1.0.0 between releases), so the owner can see which build is on the phone after an install. */
+function installedVersionLabel(): string {
+  const version = Application.nativeApplicationVersion ?? Constants.expoConfig?.version;
+  const build = Application.nativeBuildVersion;
+  if (!version) return "noma'lum";
+  return build ? `${version} · yig'ma ${build}` : version;
+}
 
 const MUTED_ICON_BG = iosColor('systemGray2');
 const SHOW_GOOGLE_CALENDAR_INTEGRATION = Platform.OS === 'ios';
@@ -384,7 +394,7 @@ export default function AccountScreen() {
             icon="info.circle"
             mdIcon="Info"
             title="Versiya"
-            subtitle={Constants.expoConfig?.version ?? "noma'lum"}
+            subtitle={installedVersionLabel()}
             showChevron={false}
           />
           <SettingsRow

@@ -98,6 +98,12 @@ jobs:
           brew install ldid
           APP=$(find build-ios/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
           rm -rf ipa && mkdir -p ipa/Payload && cp -R "$APP" ipa/Payload/
+          # Har yig'ma o'z raqamini oladi — ilovada «Hisob → Ilova haqida → Versiya: 1.0.0 · yig'ma N». Avval hammasi
+          # «1.0.0 (1)» edi va telefonga yangisi tushdimi, ko'rinmasdi (G74, 2026-11-24). Ilova va kengaytmalarda bir xil.
+          for plist in ipa/Payload/*.app/Info.plist ipa/Payload/*.app/PlugIns/*.appex/Info.plist; do
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$plist"
+            echo "yig'ma raqami: $plist → $(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$plist")"
+          done
           cat > gapla.entitlements <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
