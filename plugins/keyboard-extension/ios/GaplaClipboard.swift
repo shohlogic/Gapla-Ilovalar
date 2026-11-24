@@ -326,7 +326,7 @@ final class GaplaClipboardStore {
   }
 }
 
-/// The clipboard page, in the letter rows' place (like the emoji page): the add button and a
+/// The clipboard page, in the letter rows' and the bottom row's place: ← (back to the letters), the add button and a
 /// status line on top, the list below — newest first, pinned ones above; each row has the
 /// text's start, where and when it was copied, a pin and a delete button. Tap a row to copy it.
 ///
@@ -347,6 +347,9 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
   var onKeyClick: (() -> Void)?
   /// Page: the search field was tapped.
   var onSearchTap: (() -> Void)?
+  /// Page: ← — back to the letters. Owner 2026-11-24 («Qator ketsin»): the bottom row (ABC, emoji, language) has no
+  /// use on the clipboard page, so the page takes its place and ← goes back, as on Android (ClipboardInputLayout).
+  var onBack: (() -> Void)?
   /// Search: ✕ — back to the clipboard page.
   var onSearchClose: (() -> Void)?
   /// Search: the copy chosen is on the iPhone clipboard.
@@ -363,9 +366,9 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
   /// The computer's words (GaplaBuferOverlay.jsx).
   private static let searchPlaceholder = "Qidirish — 3 kunlik hamma nusxa ichidan"
   private static let notFoundNote = "3 kunlik hamma nusxa ichidan izlandi. Maxfiy nusxalar (parollar) qidiruvda chiqmaydi."
-  /// Below this the page (landscape phone, 98 pt) keeps its list rows and shows a search icon in the header instead
-  /// of the field row.
-  private static let fieldRowMinPageHeight: CGFloat = 120
+  /// Below this the page (landscape phone, 133 pt with the bottom row's place) keeps its list rows and shows a search
+  /// icon in the header instead of the field row; a portrait phone's page is 186 pt and more.
+  private static let fieldRowMinPageHeight: CGFloat = 150
   /// A marked word further in than this starts the line a little before it, so it shows on the row's one line.
   private static let leadKeep = 16
 
@@ -397,6 +400,7 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
   private var searchTask: URLSessionDataTask?
   private var searchGeneration = 0
 
+  private let backButton = UIButton(type: .system)
   private let addButton = UIButton(type: .system)
   /// Gapla (G53, owner 2026-11-12: [so'zlari: bilim/gapla-goyalar-royxati.md]): the same refresh as on opening, at the header's right end with
   /// the same circular-arrow icon as the Android panel (ClipboardInputLayout, Icons.Default.Refresh).
@@ -501,6 +505,9 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
     addButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(addButton)
 
+    configureHeaderIcon(backButton, systemImage: "arrow.left", label: "Harflarga qaytish")
+    backButton.addTarget(self, action: #selector(handleBackTapped), for: .touchUpInside)
+
     configureHeaderIcon(refreshButton, systemImage: "arrow.clockwise", label: "Yangilash")
     refreshButton.addTarget(self, action: #selector(handleRefreshTapped), for: .touchUpInside)
 
@@ -514,7 +521,12 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
     statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
     NSLayoutConstraint.activate([
-      addButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+      backButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+      backButton.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
+      backButton.widthAnchor.constraint(equalToConstant: 36),
+      backButton.heightAnchor.constraint(equalToConstant: 30),
+
+      addButton.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 2),
       addButton.topAnchor.constraint(equalTo: topAnchor),
       addButton.heightAnchor.constraint(equalToConstant: 30),
 
@@ -682,6 +694,10 @@ final class GaplaClipboardPanel: UIView, UITableViewDelegate {
     icon.translatesAutoresizingMaskIntoConstraints = false
     icon.setContentHuggingPriority(.required, for: .horizontal)
     return icon
+  }
+
+  @objc private func handleBackTapped() {
+    onBack?()
   }
 
   private func configureHeaderIcon(_ button: UIButton, systemImage: String, label: String) {

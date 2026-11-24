@@ -1366,6 +1366,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   private var commaButton: KeyButton?
   // Gapla (G8): the toolbar's clipboard button and its page, built the first time it opens.
   private let clipboardRowsStack = UIStackView()
+  /// The bottom row (123/ABC, emoji, language, space, return): hidden on the clipboard page, which takes its place
+  /// (owner 2026-11-24, «Qator ketsin»).
+  private weak var bottomRowView: UIView?
   private let clipboardButton = KeyButton(type: .system)
   private var clipboardPanel: GaplaClipboardPanel?
   // Gapla (G41, G55): up to three words in the toolbar's place while typing (GaplaTavsiya.swift).
@@ -3808,6 +3811,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     emojiRowsStack.isHidden = layoutMode != .emoji
     emojiButton?.isLongPressed = layoutMode == .emoji
     clipboardRowsStack.isHidden = layoutMode != .clipboard
+    bottomRowView?.isHidden = layoutMode == .clipboard
     // G73: lit while the clipboard search is open too — a tap closes it.
     clipboardButton.isLongPressed = layoutMode == .clipboard || isClipboardSearchOpen
     let modeLabel = layoutMode == .letters ? metrics.keycaps.label123 : metrics.keycaps.labelABC
@@ -3964,7 +3968,9 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
   // MARK: Gapla shared clipboard (G8)
 
   private func addClipboardPage(to stack: UIStackView) {
-    let pageHeight = 3 * metrics.keyHeight + 2 * metrics.rowGap
+    // The three letter rows and the bottom row with their gaps: the bottom row hides on this page, so the keyboard
+    // keeps its height and the list grows by a row.
+    let pageHeight = 4 * metrics.keyHeight + 3 * metrics.rowGap
     let panel = GaplaClipboardPanel(
       mode: .page,
       pageHeight: pageHeight,
@@ -3976,6 +3982,10 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     )
     panel.onKeyClick = { [weak self] in self?.playKeyClick() }
     panel.onSearchTap = { [weak self] in self?.openClipboardSearch() }
+    panel.onBack = { [weak self] in
+      self?.playKeyClick()
+      self?.returnToLetters()
+    }
     panel.translatesAutoresizingMaskIntoConstraints = false
     stack.addArrangedSubview(panel)
     let pageConstraint = panel.heightAnchor.constraint(equalToConstant: pageHeight)
@@ -4728,6 +4738,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     row.translatesAutoresizingMaskIntoConstraints = false
     stack.addArrangedSubview(row)
     constrainRowHeight(row)
+    bottomRowView = row
 
     let leftMode = makeModeKey()
     let rightMode = makeModeKey()
@@ -4856,6 +4867,7 @@ final class KeyboardViewController: UIInputViewController, UIGestureRecognizerDe
     row.translatesAutoresizingMaskIntoConstraints = false
     stack.addArrangedSubview(row)
     constrainRowHeight(row)
+    bottomRowView = row
 
     let modeButton = makeModeKey()
     self.modeButton = modeButton
